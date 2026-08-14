@@ -926,7 +926,7 @@ function preloadImage(wallpaper) {
     const width = cachedImg.naturalWidth || cachedImg.width || 1920;
     const height = cachedImg.naturalHeight || cachedImg.height || 1080;
     const isPortrait = height > width;
-    let baseRotation = (appState.config.autoRotate && isPortrait) ? 90 : 0;
+    let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
     if (wallpaper.manualRotation === undefined) {
       wallpaper.rotation = baseRotation;
     } else {
@@ -939,11 +939,11 @@ function preloadImage(wallpaper) {
     const img = new Image();
     
     img.onload = () => {
-      // Natural dimension inspection for automatic portrait-to-landscape reorientation
+      // Natural dimension inspection for automatic portrait-to-landscape reorientation (270° CCW)
       const width = img.naturalWidth || img.width;
       const height = img.naturalHeight || img.height;
       const isPortrait = height > width;
-      let baseRotation = (appState.config.autoRotate && isPortrait) ? 90 : 0;
+      let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
 
       wallpaper.naturalWidth = width;
       wallpaper.naturalHeight = height;
@@ -971,7 +971,7 @@ function preloadImage(wallpaper) {
           const width = fallbackImg.naturalWidth || fallbackImg.width;
           const height = fallbackImg.naturalHeight || fallbackImg.height;
           const isPortrait = height > width;
-          let baseRotation = (appState.config.autoRotate && isPortrait) ? 90 : 0;
+          let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
           wallpaper.rotation = wallpaper.manualRotation !== undefined ? wallpaper.manualRotation : baseRotation;
 
           appState.preloadedCache.set(wallpaper.fallbackUrl, fallbackImg);
