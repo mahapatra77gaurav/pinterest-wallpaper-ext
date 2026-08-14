@@ -1315,6 +1315,8 @@ async function fetchBoardPinsBatch(username, boardString, bookmark = null) {
  * Fetches 1 page/batch of algorithmic recommended pins from the user's logged-in Home Feed (in.pinterest.com)
  */
 async function fetchPinterestHomefeedBatch(bookmark = null) {
+  console.log('%c[Pinterest Home Feed]%c Requesting personalized stream... %cBookmark:', 'color: #e60023; font-weight: bold;', 'color: #ffffff;', 'color: #888888;', bookmark || 'initial');
+
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
     try {
       const response = await new Promise((resolve) => {
@@ -1323,28 +1325,33 @@ async function fetchPinterestHomefeedBatch(bookmark = null) {
           bookmark: bookmark 
         }, (res) => {
           if (chrome.runtime.lastError) {
+            console.error('[Pinterest Home Feed] Service worker communication error:', chrome.runtime.lastError.message);
             resolve({ success: false, error: chrome.runtime.lastError.message });
           } else {
-            resolve(res || { success: false, error: 'No response from worker' });
+            resolve(res || { success: false, error: 'No response from service worker' });
           }
         });
       });
 
       if (response && response.success && response.data) {
+        const pinCount = response.data.pins ? response.data.pins.length : 0;
+        console.log(`%c[Pinterest Home Feed]%c Successfully received ${pinCount} recommended wallpapers. %cNext bookmark:`, 'color: #00d26a; font-weight: bold;', 'color: #ffffff;', 'color: #888888;', response.data.bookmark || 'none');
         return response.data; // { pins: [...], bookmark: '...', end: false }
       }
 
-      if (response && response.error && response.error.includes('NOT_LOGGED_IN')) {
-        throw new Error('Please log in to Pinterest (in.pinterest.com) in your browser to view your personalized home feed.');
-      }
       if (response && response.error) {
+        if (response.error.includes('NOT_LOGGED_IN')) {
+          console.warn('%c[Pinterest Home Feed]%c Not logged into Pinterest in this browser. Please visit https://in.pinterest.com to log in.', 'color: #ff9800; font-weight: bold;', 'color: #ffcc80;');
+          throw new Error('Please log in to Pinterest (in.pinterest.com) in your browser to view your personalized home feed.');
+        }
+        console.error('[Pinterest Home Feed] Background worker returned error:', response.error);
         throw new Error(response.error);
       }
     } catch (e) {
       if (e.message && e.message.includes('log in to Pinterest')) {
         throw e;
       }
-      console.warn('fetchPinterestHomefeedBatch error:', e);
+      console.warn('[Pinterest Home Feed] Batch fetch exception:', e);
       throw e;
     }
   }

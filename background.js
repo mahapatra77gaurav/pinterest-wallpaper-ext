@@ -270,35 +270,51 @@ async function fetchUserPinsSinglePage(username, bookmark = null) {
 }
 
 /**
- * Fetches a single page of algorithmic recommended pins from the user's logged-in Home Feed
+ * Retrieves Pinterest session cookies & CSRF tokens from Chrome's cookie store
+ */
+async function getPinterestCookies() {
+  if (typeof chrome === 'undefined' || !chrome.cookies) {
+    return { cookieHeader: '', csrfToken: '', isLoggedIn: false, cookiesCount: 0 };
+  }
+
+  return new Promise((resolve) => {
+    chrome.cookies.getAll({ domain: 'pinterest.com' }, (cookies1 = []) => {
+      chrome.cookies.getAll({ domain: 'in.pinterest.com' }, (cookies2 = []) => {
+        const allCookies = [...cookies1, ...cookies2];
+        const unique = new Map();
+        allCookies.forEach(c => unique.set(c.name, c.value));
+
+        const csrfToken = unique.get('csrftoken') || '';
+        const isAuth = unique.get('_auth') === '1' || unique.has('_pinterest_sess') || unique.has('session_id');
+        const cookieHeader = Array.from(unique.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
+
+        resolve({
+          cookieHeader,
+          csrfToken,
+          isLoggedIn: isAuth,
+          cookiesCount: unique.size
+        });
+      });
+    });
+  });
+}
+
+/**
+ * Robust Home Feed Scraper: Extracts recommended pins using Authenticated Resource API & Embedded State Parsing
  */
 async function fetchHomefeedSinglePage(bookmark = null) {
+  console.log('[Background:HomeFeed] Starting Home Feed ingestion. Bookmark:', bookmark || 'initial');
+
+  const { cookieHeader, csrfToken, isLoggedIn, cookiesCount } = await getPinterestCookies();
+  console.log(`[Background:HomeFeed] Chrome cookie store inspected: ${cookiesCount} Pinterest cookies found. Authenticated (_auth): ${isLoggedIn}`);
+
   const domains = ['https://in.pinterest.com', 'https://www.pinterest.com'];
   let lastError = null;
 
   for (const domain of domains) {
+    // Method A: Authenticated API endpoint (UserHomefeedResource)
     try {
-      const homeRes = await fetch(`${domain}/`, {
-        credentials: 'include',
-        headers: {
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
-        }
-      });
-
-      const cookies = homeRes.headers.get('set-cookie') || '';
-      const csrfMatch = cookies.match(/csrftoken=([^;]+)/);
-      const csrf = csrfMatch ? csrfMatch[1] : '';
-
-      const headers = {
-        'X-Requested-With': 'XMLHttpRequest',
-        'X-CSRFToken': csrf,
-        'X-Pinterest-AppState': 'active',
-        'X-Pinterest-PWS-Handler': 'www/index',
-        'Cookie': cookies,
-        'Accept': 'application/json, text/javascript, */*, q=0.01',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
-      };
+      console.log(`[Background:HomeFeed] Attempting UserHomefeedResource API request to ${domain}...`);
 
       const options = {
         field_set_key: 'grid_item'
@@ -308,62 +324,169 @@ async function fetchHomefeedSinglePage(bookmark = null) {
       }
 
       const data = JSON.stringify({ options, context: {} });
-      const apiRes = await fetch(`${domain}/resource/UserHomefeedResource/get/?data=` + encodeURIComponent(data), {
-        credentials: 'include',
-        headers
+      const apiUrl = `${domain}/resource/UserHomefeedResource/get/?data=${encodeURIComponent(data)}`;
+
+      const headers = {
+        'Accept': 'application/json, text/javascript, */*, q=0.01',
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-Pinterest-AppState': 'active',
+        'X-Pinterest-PWS-Handler': 'www/index',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+      };
+
+      if (csrfToken) {
+        headers['X-CSRFToken'] = csrfToken;
+      }
+      if (cookieHeader) {
+        headers['Cookie'] = cookieHeader;
+      }
+
+      const apiRes = await fetch(apiUrl, {
+        method: 'GET',
+        headers,
+        credentials: 'include'
       });
+
+      console.log(`[Background:HomeFeed] ${domain} API responded with HTTP status ${apiRes.status}`);
 
       if (apiRes.status === 401 || apiRes.status === 403) {
-        throw new Error('NOT_LOGGED_IN: Please log in to Pinterest (in.pinterest.com) in your browser.');
-      }
+        console.warn(`[Background:HomeFeed] API returned HTTP ${apiRes.status} (Authentication credentials required)`);
+      } else if (apiRes.ok) {
+        const apiJson = await apiRes.json().catch(() => null);
+        const rawData = apiJson?.resource_response?.data || [];
+        const results = Array.isArray(rawData) ? rawData : (rawData.results || []);
+        const nextBookmark = apiJson?.resource_response?.bookmark || null;
+        const isEnd = !nextBookmark || nextBookmark === '-end-';
 
-      if (!apiRes.ok) {
-        throw new Error(`Homefeed API HTTP ${apiRes.status}`);
-      }
+        const pins = [];
+        const seen = new Set();
 
-      const apiJson = await apiRes.json().catch(() => null);
-      const rawData = apiJson?.resource_response?.data || [];
-      const results = Array.isArray(rawData) ? rawData : (rawData.results || []);
-      const nextBookmark = apiJson?.resource_response?.bookmark || null;
-      const isEnd = !nextBookmark || nextBookmark === '-end-';
+        results.forEach(item => {
+          const orig = item.images?.orig?.url || item.images?.['736x']?.url || item.images?.['474x']?.url;
+          const fallback = item.images?.['736x']?.url || orig;
+          const title = (item.title || item.grid_title || item.description || 'Personalized Home Feed Wallpaper').trim();
+          const link = item.id ? `https://www.pinterest.com/pin/${item.id}/` : `${domain}/`;
 
-      const pins = [];
-      const seen = new Set();
+          if (orig && !seen.has(orig)) {
+            seen.add(orig);
+            pins.push({
+              id: item.id || null,
+              title,
+              url: orig.replace(/\/\d+x\//, '/originals/'),
+              fallbackUrl: fallback,
+              link
+            });
+          }
+        });
 
-      results.forEach(item => {
-        const orig = item.images?.orig?.url || item.images?.['736x']?.url || item.images?.['474x']?.url;
-        const fallback = item.images?.['736x']?.url || orig;
-        const title = (item.title || item.grid_title || item.description || 'Personalized Home Feed Wallpaper').trim();
-        const link = item.id ? `https://www.pinterest.com/pin/${item.id}/` : `https://in.pinterest.com/`;
-
-        if (orig && !seen.has(orig)) {
-          seen.add(orig);
-          pins.push({
-            id: item.id || null,
-            title,
-            url: orig,
-            fallbackUrl: fallback,
-            link
-          });
+        if (pins.length > 0) {
+          console.log(`[Background:HomeFeed] Successfully extracted ${pins.length} recommended wallpapers via API.`);
+          return { pins, bookmark: nextBookmark, end: isEnd };
         }
+      }
+    } catch (apiErr) {
+      console.warn(`[Background:HomeFeed] API error on ${domain}:`, apiErr.message);
+      lastError = apiErr;
+    }
+
+    // Method B: Embedded Server-Rendered JSON State Parsing (__PWS_DATA__ and __PWS_INITIAL_PROPS__)
+    try {
+      console.log(`[Background:HomeFeed] Attempting embedded state parsing on ${domain}/...`);
+      const htmlHeaders = {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+      };
+      if (cookieHeader) {
+        htmlHeaders['Cookie'] = cookieHeader;
+      }
+
+      const htmlRes = await fetch(`${domain}/`, {
+        method: 'GET',
+        headers: htmlHeaders,
+        credentials: 'include'
       });
 
-      if (pins.length > 0) {
-        return {
-          pins,
-          bookmark: nextBookmark,
-          end: isEnd
-        };
+      console.log(`[Background:HomeFeed] ${domain} HTML page responded with HTTP status ${htmlRes.status}`);
+
+      if (htmlRes.ok) {
+        const html = await htmlRes.text();
+        const pins = [];
+        const seen = new Set();
+        let nextBookmark = null;
+
+        // Parse __PWS_DATA__ JSON script blob
+        const pwsMatch = html.match(/<script id="__PWS_DATA__"[^>]*>([\s\S]*?)<\/script>/i);
+        if (pwsMatch) {
+          try {
+            const data = JSON.parse(pwsMatch[1]);
+            const redux = data.props?.initialReduxState || data.initialReduxState || {};
+            const pinsObj = redux.pins || {};
+            for (const [id, pin] of Object.entries(pinsObj)) {
+              const orig = pin.images?.orig?.url || pin.images?.['736x']?.url || pin.images?.['474x']?.url;
+              if (orig && !seen.has(orig)) {
+                seen.add(orig);
+                pins.push({
+                  id: pin.id || id,
+                  title: pin.title || pin.grid_title || pin.description || 'Personalized Home Feed Wallpaper',
+                  url: orig.replace(/\/\d+x\//, '/originals/'),
+                  fallbackUrl: orig,
+                  link: `https://www.pinterest.com/pin/${pin.id || id}/`
+                });
+              }
+            }
+
+            const resources = redux.resources || {};
+            for (const [resKey, resVal] of Object.entries(resources)) {
+              if (resKey.includes('Homefeed') || resKey.includes('Feed')) {
+                if (resVal.data?.bookmark) nextBookmark = resVal.data.bookmark;
+              }
+            }
+          } catch (e) {
+            console.warn('[Background:HomeFeed] __PWS_DATA__ parse warning:', e);
+          }
+        }
+
+        // Parse __PWS_INITIAL_PROPS__ JSON script blob
+        const propsMatch = html.match(/<script id="__PWS_INITIAL_PROPS__"[^>]*>([\s\S]*?)<\/script>/i);
+        if (propsMatch) {
+          try {
+            const props = JSON.parse(propsMatch[1]);
+            const redux = props.initialReduxState || {};
+            const pinsObj = redux.pins || {};
+            for (const [id, pin] of Object.entries(pinsObj)) {
+              const orig = pin.images?.orig?.url || pin.images?.['736x']?.url || pin.images?.['474x']?.url;
+              if (orig && !seen.has(orig)) {
+                seen.add(orig);
+                pins.push({
+                  id: pin.id || id,
+                  title: pin.title || pin.grid_title || pin.description || 'Personalized Home Feed Wallpaper',
+                  url: orig.replace(/\/\d+x\//, '/originals/'),
+                  fallbackUrl: orig,
+                  link: `https://www.pinterest.com/pin/${pin.id || id}/`
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('[Background:HomeFeed] __PWS_INITIAL_PROPS__ parse warning:', e);
+          }
+        }
+
+        if (pins.length > 0) {
+          console.log(`[Background:HomeFeed] Successfully extracted ${pins.length} recommended wallpapers from embedded state.`);
+          return { pins, bookmark: nextBookmark, end: !nextBookmark };
+        }
       }
-    } catch (e) {
-      lastError = e;
-      if (e.message && e.message.startsWith('NOT_LOGGED_IN')) {
-        throw e;
-      }
+    } catch (htmlErr) {
+      console.warn(`[Background:HomeFeed] HTML extraction error on ${domain}:`, htmlErr.message);
+      lastError = htmlErr;
     }
   }
 
-  throw lastError || new Error('Failed to fetch home feed pins.');
+  if (!isLoggedIn) {
+    throw new Error('NOT_LOGGED_IN: Please log in to Pinterest (in.pinterest.com) in your browser to view your personalized home feed.');
+  }
+
+  throw lastError || new Error('No wallpapers found in home feed. Please check if you are logged in to Pinterest at in.pinterest.com.');
 }
 
 /**
