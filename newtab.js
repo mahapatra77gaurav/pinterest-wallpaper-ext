@@ -1098,35 +1098,181 @@ async function fetchUserPinsBatch(username, bookmark = null) {
 }
 
 /**
+ * Fetches 1 page/batch of user feed pins with bookmark pagination
+ */
+async function fetchFeedPinsBatch(username, bookmark = null) {
+  if (!username) return { pins: [], bookmark: null, end: true };
+
+  if (!bookmark) {
+    // Initial page: Combine RSS feed with initial UserPins page to get bookmark
+    const [feedRes, userPinsRes] = await Promise.allSettled([
+      fetchFeedPins(username),
+      fetchUserPinsBatch(username, null)
+    ]);
+
+    const combined = [];
+    const seen = new Set();
+
+    if (feedRes.status === 'fulfilled' && Array.isArray(feedRes.value)) {
+      feedRes.value.forEach(p => {
+        if (p && p.url && !seen.has(p.url)) {
+          seen.add(p.url);
+          combined.push(p);
+        }
+      });
+    }
+
+    let nextBookmark = null;
+    let isEnd = false;
+    if (userPinsRes.status === 'fulfilled' && userPinsRes.value && Array.isArray(userPinsRes.value.pins)) {
+      userPinsRes.value.pins.forEach(p => {
+        if (p && p.url && !seen.has(p.url)) {
+          seen.add(p.url);
+          combined.push(p);
+        }
+      });
+      nextBookmark = userPinsRes.value.bookmark || null;
+      isEnd = userPinsRes.value.end || false;
+    }
+
+    return { pins: combined, bookmark: nextBookmark, end: isEnd };
+  } else {
+    // Subsequent pages: paginate via UserPinsResource
+    return fetchUserPinsBatch(username, bookmark);
+  }
+}
+
+/**
+ * Fetches 1 page/batch combining saved pins and live feed with bookmark pagination
+ */
+async function fetchBothPinsBatch(username, bookmark = null) {
+  if (!username) return { pins: [], bookmark: null, end: true };
+
+  if (!bookmark) {
+    const [feedRes, savedRes] = await Promise.allSettled([
+      fetchFeedPins(username),
+      fetchUserPinsBatch(username, null)
+    ]);
+
+    const combined = [];
+    const seen = new Set();
+
+    if (feedRes.status === 'fulfilled' && Array.isArray(feedRes.value)) {
+      feedRes.value.forEach(p => {
+        if (p && p.url && !seen.has(p.url)) {
+          seen.add(p.url);
+          combined.push(p);
+        }
+      });
+    }
+
+    let nextBookmark = null;
+    let isEnd = false;
+    if (savedRes.status === 'fulfilled' && savedRes.value && Array.isArray(savedRes.value.pins)) {
+      savedRes.value.pins.forEach(p => {
+        if (p && p.url && !seen.has(p.url)) {
+          seen.add(p.url);
+          combined.push(p);
+        }
+      });
+      nextBookmark = savedRes.value.bookmark || null;
+      isEnd = savedRes.value.end || false;
+    }
+
+    return { pins: combined, bookmark: nextBookmark, end: isEnd };
+  } else {
+    return fetchUserPinsBatch(username, bookmark);
+  }
+}
+
+/**
+ * Fetches 1 page/batch for Pinterest Boards with bookmark pagination
+ */
+async function fetchBoardPinsBatch(username, boardString, bookmark = null) {
+  const board = sanitizeBoard(boardString) || 'wallpapers';
+  const query = `${username} ${board}`;
+
+  if (!bookmark) {
+    // Initial page: Combine direct board RSS/HTML crawl with board search batch
+    const [boardPinsRes, searchBatchRes] = await Promise.allSettled([
+      fetchBoardPins(username, board),
+      fetchPinterestSearchBatch(query, null)
+    ]);
+
+    const combined = [];
+    const seen = new Set();
+
+    if (boardPinsRes.status === 'fulfilled' && Array.isArray(boardPinsRes.value)) {
+      boardPinsRes.value.forEach(p => {
+        if (p && p.url && !seen.has(p.url)) {
+          seen.add(p.url);
+          combined.push(p);
+        }
+      });
+    }
+
+    let nextBookmark = null;
+    let isEnd = false;
+    if (searchBatchRes.status === 'fulfilled' && searchBatchRes.value && Array.isArray(searchBatchRes.value.pins)) {
+      searchBatchRes.value.pins.forEach(p => {
+        if (p && p.url && !seen.has(p.url)) {
+          seen.add(p.url);
+          combined.push(p);
+        }
+      });
+      nextBookmark = searchBatchRes.value.bookmark || null;
+      isEnd = searchBatchRes.value.end || false;
+    }
+
+    return { pins: combined, bookmark: nextBookmark, end: isEnd };
+  } else {
+    // Subsequent pages: paginate continuous board stream
+    return fetchPinterestSearchBatch(query, bookmark);
+  }
+}
+
+/**
  * Automatically triggers background fetch for the next page of pins
- * when fewer than 6 unviewed images remain in the active queue
+ * when fewer than 6 unviewed images remain in the active queue (unified across all Pinterest modes)
  */
 async function fetchNextBatch() {
   if (appState.isFetchingNextBatch || appState.isLoadingFeed) return;
   const mode = appState.config.sourceMode;
-  if (!['pinterest-search', 'pinterest-both', 'pinterest-saved'].includes(mode)) return;
+  if (!['pinterest-search', 'pinterest-both', 'pinterest-saved', 'pinterest-feed', 'pinterest-board'].includes(mode)) return;
 
   appState.isFetchingNextBatch = true;
   try {
     let result = null;
+    const user = sanitizeHandle(appState.config.username) || 'pinterest';
+
     if (mode === 'pinterest-search') {
       const query = appState.config.searchQuery || '4k dark cyberpunk wallpaper';
       result = await fetchPinterestSearchBatch(query, appState.paginationBookmark);
-    } else if (mode === 'pinterest-saved' || mode === 'pinterest-both') {
-      const user = sanitizeHandle(appState.config.username) || 'pinterest';
+    } else if (mode === 'pinterest-saved') {
       result = await fetchUserPinsBatch(user, appState.paginationBookmark);
+    } else if (mode === 'pinterest-feed') {
+      result = await fetchFeedPinsBatch(user, appState.paginationBookmark);
+    } else if (mode === 'pinterest-both') {
+      result = await fetchBothPinsBatch(user, appState.paginationBookmark);
+    } else if (mode === 'pinterest-board') {
+      const board = sanitizeBoard(appState.config.board) || 'wallpapers';
+      result = await fetchBoardPinsBatch(user, board, appState.paginationBookmark);
     }
 
     if (result && Array.isArray(result.pins) && result.pins.length > 0) {
-      let addedCount = 0;
+      let addedPins = [];
       result.pins.forEach(pin => {
         if (!appState.seenUrls.has(pin.url)) {
           appState.seenUrls.add(pin.url);
           appState.wallpaperQueue.push(pin);
-          appState.wallpapers.push(pin);
-          addedCount++;
+          addedPins.push(pin);
         }
       });
+
+      if (addedPins.length > 0) {
+        const shuffledAdded = shuffleArray([...addedPins]);
+        appState.wallpapers.push(...shuffledAdded);
+      }
 
       // Update bookmark cursor or reset if at end of stream to loop continuously
       if (result.end || !result.bookmark || result.bookmark === '-end-') {
@@ -1135,7 +1281,7 @@ async function fetchNextBatch() {
         appState.paginationBookmark = result.bookmark;
       }
 
-      // Save updated queue to chrome.storage.local
+      // Save updated queue snapshot to chrome.storage.local
       saveQueueToStorage();
       updateActiveStatusLabel();
     } else {
@@ -1499,7 +1645,6 @@ async function loadWallpapersByMode(notify = false) {
       const query = (appState.config.searchQuery || '4k dark cyberpunk wallpaper').trim();
       updateStatus('loading', `Searching Pinterest for "${query}"...`);
       
-      // Fetch initial batch with pagination cursor
       const batch = await fetchPinterestSearchBatch(query, null);
       const pins = batch.pins || [];
 
@@ -1519,18 +1664,25 @@ async function loadWallpapersByMode(notify = false) {
 
     } else if (mode === 'pinterest-both') {
       updateStatus('loading', `Aggregating all saved pins & feed for @${user}...`);
-      const pins = await fetchBothPins(user);
+      const batch = await fetchBothPinsBatch(user, null);
+      const pins = batch.pins || [];
+
+      if (pins.length === 0) {
+        throw new Error(`No pins found for @${user}. The account might be private or empty.`);
+      }
       
       appState.seenUrls.clear();
       pins.forEach(p => appState.seenUrls.add(p.url));
       appState.wallpaperQueue = [...pins];
       appState.wallpapers = shuffleArray([...pins]);
+      appState.paginationBookmark = batch.bookmark || null;
+
       saveQueueToStorage();
       updateActiveStatusLabel();
       if (notify) showToast(`Loaded ${pins.length} wallpapers from @${user}`);
 
     } else if (mode === 'pinterest-saved') {
-      updateStatus('loading', `Fetching all saved pins & boards for @${user}...`);
+      updateStatus('loading', `Fetching all saved pins for @${user}...`);
       const batch = await fetchUserPinsBatch(user, null);
       const pins = batch.pins || [];
       if (pins.length === 0) {
@@ -1549,15 +1701,18 @@ async function loadWallpapersByMode(notify = false) {
 
     } else if (mode === 'pinterest-feed') {
       updateStatus('loading', `Fetching latest feed stream for @${user}...`);
-      const pins = await fetchFeedPins(user);
+      const batch = await fetchFeedPinsBatch(user, null);
+      const pins = batch.pins || [];
       if (pins.length === 0) {
-        throw new Error(`No pins found in RSS feed for @${user}.`);
+        throw new Error(`No pins found in feed for @${user}.`);
       }
 
       appState.seenUrls.clear();
       pins.forEach(p => appState.seenUrls.add(p.url));
       appState.wallpaperQueue = [...pins];
       appState.wallpapers = shuffleArray([...pins]);
+      appState.paginationBookmark = batch.bookmark || null;
+
       saveQueueToStorage();
       updateActiveStatusLabel();
       if (notify) showToast(`Loaded ${pins.length} wallpapers from @${user} Feed`);
@@ -1565,12 +1720,18 @@ async function loadWallpapersByMode(notify = false) {
     } else if (mode === 'pinterest-board') {
       const board = sanitizeBoard(appState.config.board) || 'wallpapers';
       updateStatus('loading', `Fetching board(s) "${board}" for @${user}...`);
-      const pins = await fetchBoardPins(user, board);
+      const batch = await fetchBoardPinsBatch(user, board, null);
+      const pins = batch.pins || [];
+      if (pins.length === 0) {
+        throw new Error(`No pins found in board(s) "${board}" for @${user}.`);
+      }
 
       appState.seenUrls.clear();
       pins.forEach(p => appState.seenUrls.add(p.url));
       appState.wallpaperQueue = [...pins];
       appState.wallpapers = shuffleArray([...pins]);
+      appState.paginationBookmark = batch.bookmark || null;
+
       saveQueueToStorage();
       updateActiveStatusLabel();
       if (notify) showToast(`Loaded ${pins.length} wallpapers from board(s)`);
