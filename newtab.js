@@ -198,7 +198,7 @@ function initClock() {
 }
 
 // =============================================================================
-// Editable Shortcuts Dock (chrome.storage.local seeded from topSites)
+// Editable Shortcuts Dock
 // =============================================================================
 
 function getCleanDomain(urlStr) {
@@ -229,7 +229,6 @@ async function loadUserShortcuts() {
         if (result && Array.isArray(result.user_shortcuts)) {
           resolve(result.user_shortcuts);
         } else {
-          // Seed from chrome.topSites.get() on first run
           seedFromTopSites().then((seeded) => {
             saveUserShortcuts(seeded);
             resolve(seeded);
@@ -316,7 +315,6 @@ function renderShortcuts() {
     link.href = formatUrl(site.url);
     link.title = `${title} (${site.url})`;
 
-    // Delete Button (✕)
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'shortcut-delete-btn';
     deleteBtn.type = 'button';
@@ -343,7 +341,6 @@ function renderShortcuts() {
     img.alt = title;
     img.loading = 'lazy';
 
-    // Letter avatar fallback
     img.onerror = () => {
       img.remove();
       const letter = document.createElement('span');
@@ -364,7 +361,6 @@ function renderShortcuts() {
     elements.shortcuts.appendChild(link);
   });
 
-  // "+ Add" Tile Button
   const addBtn = document.createElement('button');
   addBtn.className = 'shortcut-add-card';
   addBtn.type = 'button';
@@ -415,35 +411,99 @@ function closeAddShortcutModal() {
 }
 
 // =============================================================================
-// Pinterest RSS Parser & High-Resolution Image Upgrade Engine
+// Privileged RSS Fetcher (Bypasses CORS via background service worker)
 // =============================================================================
 
-function sanitizeString(str) {
-  if (!str) return '';
-  return str.trim().replace(/^@+/, '').replace(/^\/+|\/+$/g, '');
-}
+async function fetchRssContent(url) {
+  // 1. First attempt: Send request to background service worker (Bypasses CORS in MV3)
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    try {
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'FETCH_RSS', url: url }, (res) => {
+          if (chrome.runtime.lastError) {
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(res || { success: false, error: 'No response from background worker' });
+          }
+        });
+      });
 
-/**
- * Upgrades Pinterest thumbnail image URLs to /originals/
- */
-function upgradePinterestImageUrl(rawUrl) {
-  if (!rawUrl) return null;
-  return rawUrl.replace(/\/(?:[0-9]+x[0-9]*|[0-9]+x)\//i, '/originals/');
-}
+      if (response && response.success && response.data) {
+        return response.data;
+      }
+      if (response && response.error) {
+        console.warn('Background worker RSS error:', response.error);
+      }
+    } catch (msgErr) {
+      console.warn('Background messaging exception:', msgErr);
+    }
+  }
 
-async function fetchPinterestRSS(rssUrl, fallbackTitle) {
-  const response = await fetch(rssUrl, {
+  // 2. Direct fetch fallback
+  const res = await fetch(url, {
     method: 'GET',
     headers: {
       'Accept': 'application/rss+xml, application/xml, text/xml, */*'
     }
   });
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch RSS (${response.status}: ${response.statusText}). Check username or board.`);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
   }
 
-  const xmlText = await response.text();
+  return await res.text();
+}
+
+// =============================================================================
+// Pinterest RSS Parser & High-Resolution Image Upgrade Engine
+// =============================================================================
+
+function sanitizeHandle(str) {
+  if (!str) return '';
+  let clean = str.trim();
+  
+  // If user pasted a full URL (e.g. https://www.pinterest.com/username/ or https://pinterest.com/username/feed.rss)
+  try {
+    if (/^https?:\/\//i.test(clean)) {
+      const parsed = new URL(clean);
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      if (parts.length > 0) {
+        clean = parts[0];
+      }
+    }
+  } catch (e) {}
+
+  return clean.replace(/^@+/, '').replace(/\/feed\.rss$/i, '').replace(/^\/+|\/+$/g, '');
+}
+
+function sanitizeBoard(str) {
+  if (!str) return '';
+  let clean = str.trim();
+
+  // If user pasted a full board URL (e.g. https://www.pinterest.com/username/board-name/)
+  try {
+    if (/^https?:\/\//i.test(clean)) {
+      const parsed = new URL(clean);
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      if (parts.length > 1) {
+        clean = parts[1];
+      } else if (parts.length === 1) {
+        clean = parts[0];
+      }
+    }
+  } catch (e) {}
+
+  return clean.replace(/\.rss$/i, '').replace(/^\/+|\/+$/g, '');
+}
+
+function upgradePinterestImageUrl(rawUrl) {
+  if (!rawUrl) return null;
+  return rawUrl.replace(/\/(?:[0-9]+x[0-9]*|[0-9]+x)\//i, '/originals/');
+}
+
+async function fetchPinterestRSS(rssUrl, fallbackTitle) {
+  const xmlText = await fetchRssContent(rssUrl);
+
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
 
@@ -453,13 +513,15 @@ async function fetchPinterestRSS(rssUrl, fallbackTitle) {
 
   const items = xmlDoc.querySelectorAll('item');
   if (!items || items.length === 0) {
-    throw new Error('No pins found in this feed or board.');
+    throw new Error('No pins found in this feed or board. It may be empty or private.');
   }
 
   const parsedWallpapers = [];
 
   items.forEach((item) => {
-    const title = item.querySelector('title')?.textContent || fallbackTitle || 'Pinterest Wallpaper';
+    let rawTitle = item.querySelector('title')?.textContent || '';
+    rawTitle = rawTitle.trim();
+    const title = rawTitle || fallbackTitle || 'Pinterest Wallpaper';
     const link = item.querySelector('link')?.textContent || 'https://www.pinterest.com';
     
     let rawImgUrl = null;
@@ -471,7 +533,7 @@ async function fetchPinterestRSS(rssUrl, fallbackTitle) {
       rawImgUrl = match[1];
     }
 
-    // 2. Check enclosure
+    // 2. Check enclosure tag
     if (!rawImgUrl) {
       const enclosure = item.querySelector('enclosure');
       if (enclosure && enclosure.getAttribute('url')) {
@@ -479,7 +541,7 @@ async function fetchPinterestRSS(rssUrl, fallbackTitle) {
       }
     }
 
-    // 3. Check media:content
+    // 3. Check media:content tag
     if (!rawImgUrl) {
       const mediaContent = item.getElementsByTagName('media:content')[0];
       if (mediaContent && mediaContent.getAttribute('url')) {
@@ -518,7 +580,7 @@ function preloadImage(wallpaper) {
     };
 
     img.onerror = () => {
-      // If /originals/ resolution is unavailable for older pins, fallback to thumbnail/736x
+      // If /originals/ resolution is unavailable, fallback to thumbnail/736x
       if (wallpaper.fallbackUrl && wallpaper.fallbackUrl !== wallpaper.url) {
         const fallbackImg = new Image();
         fallbackImg.onload = () => resolve({ success: true, src: wallpaper.fallbackUrl });
@@ -635,8 +697,8 @@ async function loadWallpapersByMode(notify = false) {
 
   try {
     if (mode === 'pinterest-board') {
-      const user = sanitizeString(appState.config.username) || 'pinterest';
-      const board = sanitizeString(appState.config.board) || 'wallpapers';
+      const user = sanitizeHandle(appState.config.username) || 'pinterest';
+      const board = sanitizeBoard(appState.config.board) || 'wallpapers';
       const rssUrl = `https://www.pinterest.com/${encodeURIComponent(user)}/${encodeURIComponent(board)}.rss`;
       
       updateStatus('loading', `Fetching @${user}/${board}...`);
@@ -647,10 +709,10 @@ async function loadWallpapersByMode(notify = false) {
       if (notify) showToast(`Loaded ${pins.length} wallpapers from Pinterest Board`);
 
     } else if (mode === 'pinterest-feed') {
-      const user = sanitizeString(appState.config.username) || 'pinterest';
+      const user = sanitizeHandle(appState.config.username) || 'pinterest';
       const rssUrl = `https://www.pinterest.com/${encodeURIComponent(user)}/feed.rss`;
       
-      updateStatus('loading', `Fetching user feed for @${user}...`);
+      updateStatus('loading', `Fetching feed for @${user}...`);
       const pins = await fetchPinterestRSS(rssUrl, `Pinterest: @${user} Feed`);
       
       appState.wallpapers = shuffleArray([...pins]);
@@ -712,7 +774,6 @@ async function loadWallpapersByMode(notify = false) {
 // =============================================================================
 
 function updateFormVisibility(mode) {
-  // Hide all conditional groups first
   elements.groupPresets.classList.add('hidden');
   elements.groupPinterestUser.classList.add('hidden');
   elements.groupPinterestBoard.classList.add('hidden');
@@ -940,8 +1001,8 @@ function setupEventListeners() {
     e.preventDefault();
     
     const mode = elements.selectSourceMode.value;
-    const newUsername = sanitizeString(elements.inputUsername.value) || 'pinterest';
-    const newBoard = sanitizeString(elements.inputBoard.value) || 'wallpapers';
+    const newUsername = sanitizeHandle(elements.inputUsername.value) || 'pinterest';
+    const newBoard = sanitizeBoard(elements.inputBoard.value) || 'wallpapers';
     const newDirectUrl = elements.inputDirectUrl.value.trim();
     const newInterval = Math.max(5, parseInt(elements.inputInterval.value, 10) || 30);
     const newTimeFormat = elements.inputTimeFormat.value || '12h';

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pinterest Dynamic New Tab",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Transform your new tab into an aesthetic, dynamic Pinterest wallpaper showcase with editable shortcuts, multi-source wallpaper engine, and sleek glassmorphism.",
   "permissions": [
     "topSites",
@@ -9,9 +9,14 @@
     "unlimitedStorage"
   ],
   "host_permissions": [
-    "https://www.pinterest.com/*",
-    "https://*.pinimg.com/*"
+    "https://*.pinterest.com/*",
+    "https://pinterest.com/*",
+    "https://*.pinimg.com/*",
+    "https://pinimg.com/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "chrome_url_overrides": {
     "newtab": "newtab.html"
   },
