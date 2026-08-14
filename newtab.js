@@ -624,6 +624,32 @@ function findBoardSlugsFromHtml(html, user) {
 }
 
 /**
+ * Fetches all user saved pins with deep multi-page pagination via background worker
+ */
+async function fetchUserPinsViaBackground(username, maxPages = 15) {
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    try {
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'FETCH_ALL_USER_PINS', username, maxPages }, (res) => {
+          if (chrome.runtime.lastError) {
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(res || { success: false, error: 'No response from worker' });
+          }
+        });
+      });
+
+      if (response && response.success && Array.isArray(response.data) && response.data.length > 0) {
+        return response.data;
+      }
+    } catch (e) {
+      console.warn('fetchUserPinsViaBackground exception:', e);
+    }
+  }
+  return null;
+}
+
+/**
  * Fetches feed.rss for a user
  */
 async function fetchFeedPins(user) {
@@ -633,28 +659,34 @@ async function fetchFeedPins(user) {
 }
 
 /**
- * Aggregates all saved pins across profile, saved tab, and all detected boards
+ * Aggregates all saved pins across paginated UserPinsResource, profile, and all detected boards
  */
 async function fetchAllSavedPins(user) {
   const allPins = [];
   const seenUrls = new Set();
 
   function addPins(list) {
+    if (!Array.isArray(list)) return;
     list.forEach(p => {
-      if (!seenUrls.has(p.url)) {
+      if (p && p.url && !seenUrls.has(p.url)) {
         seenUrls.add(p.url);
         allPins.push(p);
       }
     });
   }
 
-  // 1. Fetch Profile HTML
+  // 1. Fetch paginated UserPinsResource via background worker (Gets 200+ pins!)
+  const bgPins = await fetchUserPinsViaBackground(user, 15);
+  if (bgPins && bgPins.length > 0) {
+    addPins(bgPins);
+  }
+
+  // 2. Fetch Profile HTML and crawl discovered boards
   try {
     const profileHtml = await fetchRssContent(`https://www.pinterest.com/${encodeURIComponent(user)}/`);
     const profilePins = extractPinsFromHtml(profileHtml, `@${user} Pin`, `https://www.pinterest.com/${user}/`);
     addPins(profilePins);
 
-    // 2. Discover user's boards from profile and fetch their board RSS
     const boards = findBoardSlugsFromHtml(profileHtml, user);
     if (boards.length > 0) {
       const boardFetches = boards.slice(0, 8).map(async (boardSlug) => {
@@ -675,7 +707,7 @@ async function fetchAllSavedPins(user) {
       });
     }
   } catch (e) {
-    console.warn('Saved pins profile fetch issue:', e);
+    console.warn('Profile crawl notice:', e);
   }
 
   // 3. Fetch _saved/ tab HTML
@@ -696,8 +728,9 @@ async function fetchBothPins(user) {
   const seenUrls = new Set();
 
   function addPins(list) {
+    if (!Array.isArray(list)) return;
     list.forEach(p => {
-      if (!seenUrls.has(p.url)) {
+      if (p && p.url && !seenUrls.has(p.url)) {
         seenUrls.add(p.url);
         allPins.push(p);
       }
@@ -731,8 +764,9 @@ async function fetchBoardPins(user, boardString) {
   const seenUrls = new Set();
 
   function addPins(list) {
+    if (!Array.isArray(list)) return;
     list.forEach(p => {
-      if (!seenUrls.has(p.url)) {
+      if (p && p.url && !seenUrls.has(p.url)) {
         seenUrls.add(p.url);
         allPins.push(p);
       }
