@@ -42,41 +42,29 @@
   <!-- Radial Vignette & Contrast Overlay Layer -->
   <div class="vignette-overlay" aria-hidden="true"></div>
 
-  <!-- Main App Shell -->
-  <div class="app-layout">
-    <!-- Top Action Bar: Pinterest Source Attribution & Controls -->
-    <header class="top-nav">
-      <!-- Pinterest Source Attribution Card / Status Pill -->
-      <a id="pin-link" class="pin-attribution glass-panel" href="https://in.pinterest.com" target="_blank" rel="noopener noreferrer" title="View on Pinterest">
-        <svg class="pin-icon" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 0a12 12 0 0 0-4.37 23.17c-.07-.99-.13-2.52.03-3.61.14-.98.92-3.92.92-3.92s-.23-.47-.23-1.16c0-1.09.63-1.9 1.42-1.9.67 0 .99.5 1 .1 1.1 0 .69-.44 1.73-.67 2.69-.19.78.39 1.42 1.16 1.42 1.39 0 2.46-1.47 2.46-3.59 0-1.88-1.35-3.19-3.28-3.19-2.4 0-3.8 1.8-3.8 3.66 0 .72.28 1.5.63 1.92.07.08.08.16.06.24-.07.28-.22.88-.25 1-.04.16-.13.2-.3.12-1.11-.52-1.81-2.14-1.81-3.45 0-2.81 2.04-5.39 5.88-5.39 3.09 0 5.49 2.2 5.49 5.14 0 3.07-1.93 5.54-4.62 5.54-.9 0-1.75-.47-2.04-1.02l-.56 2.12c-.2 1.05-.75 2.37-1.12 3.19A12 12 0 1 0 12 0z"/>
-        </svg>
-        <span id="pin-title" class="pin-title">Loading Wallpaper...</span>
-        <svg class="external-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-          <polyline points="15 3 21 3 21 9"></polyline>
-          <line x1="10" y1="14" x2="21" y2="3"></line>
-        </svg>
-      </a>
-
-      <!-- Quick Controls: Prev, Next, Rotate, Pause/Play, Settings -->
-      <div class="top-actions">
-        <!-- Rotate Wallpaper Angle (0° -> 90° -> 180° -> 270°) -->
-        <button id="rotate-btn" class="glass-btn icon-btn" title="Rotate wallpaper (Key: R)" aria-label="Rotate Wallpaper">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+  <!-- Main Application Container -->
+  <div class="app-container">
+    
+    <!-- Top Bar: Current Wallpaper Attribution & Action Controls -->
+    <header class="top-bar">
+      <div id="wallpaper-info" class="wallpaper-info" title="Current wallpaper details">
+        <a id="pin-link" href="#" target="_blank" rel="noopener noreferrer" class="pin-link glass-pill">
+          <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0a12 12 0 0 0-4.37 23.17c-.07-.99-.13-2.52.03-3.61.14-.98.92-3.92.92-3.92s-.23-.47-.23-1.16c0-1.09.63-1.9 1.42-1.9.67 0 .99.5 1 .1 1.1 0 .69-.44 1.73-.67 2.69-.19.78.39 1.42 1.16 1.42 1.39 0 2.46-1.47 2.46-3.59 0-1.88-1.35-3.19-3.28-3.19-2.4 0-3.8 1.8-3.8 3.66 0 .72.28 1.5.63 1.92.07.08.08.16.06.24-.07.28-.22.88-.25 1-.04.16-.13.2-.3.12-1.11-.52-1.81-2.14-1.81-3.45 0-2.81 2.04-5.39 5.88-5.39 3.09 0 5.49 2.2 5.49 5.14 0 3.07-1.93 5.54-4.62 5.54-.9 0-1.75-.47-2.04-1.02l-.56 2.12c-.2 1.05-.75 2.37-1.12 3.19A12 12 0 1 0 12 0z"/>
           </svg>
-        </button>
+          <span id="pin-title" class="pin-title">Pinterest Wallpaper</span>
+        </a>
+      </div>
 
-        <!-- Previous Wallpaper -->
-        <button id="prev-btn" class="glass-btn icon-btn" title="Previous Wallpaper (Left Arrow)" aria-label="Previous Wallpaper">
+      <div class="top-actions">
+        <!-- Manual Wallpaper Navigation (Active in Cycling Modes) -->
+        <button id="prev-btn" class="glass-btn icon-btn" title="Previous Wallpaper (←)" aria-label="Previous Wallpaper">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 18 9 12 15 6"></polyline>
           </svg>
         </button>
 
-        <!-- Pause / Resume Cycle -->
-        <button id="pause-btn" class="glass-btn icon-btn" title="Pause / Resume cycling (Space)" aria-label="Pause cycling">
+        <button id="pause-btn" class="glass-btn icon-btn" title="Pause / Play Cycling (Space)" aria-label="Pause / Play Cycling">
           <svg id="pause-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="6" y="4" width="4" height="16"></rect>
             <rect x="14" y="4" width="4" height="16"></rect>
@@ -86,10 +74,16 @@
           </svg>
         </button>
 
-        <!-- Next Wallpaper -->
-        <button id="next-btn" class="glass-btn icon-btn" title="Next Wallpaper (Right Arrow)" aria-label="Next Wallpaper">
+        <button id="next-btn" class="glass-btn icon-btn" title="Next Wallpaper (→)" aria-label="Next Wallpaper">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+
+        <!-- Manual Wallpaper Orientation Rotate -->
+        <button id="rotate-btn" class="glass-btn icon-btn" title="Rotate Wallpaper 90° (R)" aria-label="Rotate Wallpaper">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
           </svg>
         </button>
 
@@ -103,7 +97,7 @@
       </div>
     </header>
 
-    <!-- Central Hero Container: Clock, Date, and Search -->
+    <!-- Central Hero: Time, Date & Quick Search -->
     <main class="center-content">
       <div class="clock-container">
         <h1 id="time" class="time-display">--:--</h1>
@@ -122,7 +116,7 @@
       </form>
     </main>
 
-    <!-- Bottom Section: Editable Chrome Shortcuts Dock -->
+    <!-- Bottom Dock: Editable Shortcuts -->
     <footer class="bottom-dock">
       <div id="shortcuts" class="shortcuts-container glass-panel" role="region" aria-label="Quick Shortcuts">
         <!-- Dynamic Shortcut Cards + Add Button injected via newtab.js -->
