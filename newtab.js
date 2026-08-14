@@ -16,6 +16,7 @@ const DEFAULT_CONFIG = {
   localImageName: '',
   interval: 30, // seconds
   timeFormat: '12h',
+  fitMode: 'cover', // 'cover' | 'contain' | 'auto'
   dim: 25, // percentage
   blur: 0 // pixels
 };
@@ -67,6 +68,7 @@ let appState = {
 // =============================================================================
 
 const elements = {
+  bgAmbient: document.getElementById('bg-ambient'),
   bg1: document.getElementById('bg-1'),
   bg2: document.getElementById('bg-2'),
   time: document.getElementById('time'),
@@ -88,6 +90,7 @@ const elements = {
   
   // Settings Form Inputs
   selectSourceMode: document.getElementById('select-source-mode'),
+  selectFitMode: document.getElementById('select-fit-mode'),
   groupPresets: document.getElementById('group-presets'),
   groupPinterestUser: document.getElementById('group-pinterest-user'),
   groupPinterestBoard: document.getElementById('group-pinterest-board'),
@@ -611,6 +614,9 @@ async function displayWallpaper(index, manual = false) {
   const nextLayerEl = nextLayerNum === 1 ? elements.bg1 : elements.bg2;
 
   nextLayerEl.style.backgroundImage = `url("${imageSrc}")`;
+  if (elements.bgAmbient) {
+    elements.bgAmbient.style.backgroundImage = `url("${imageSrc}")`;
+  }
 
   nextLayerEl.classList.add('active');
   activeLayerEl.classList.remove('active');
@@ -799,9 +805,14 @@ function updateFormVisibility(mode) {
 function applyVisualSettings() {
   const dim = appState.config.dim ?? 25;
   const blur = appState.config.blur ?? 0;
+  const fitMode = appState.config.fitMode || 'cover';
 
   document.documentElement.style.setProperty('--dim-overlay', `rgba(0, 0, 0, ${dim / 100})`);
   document.documentElement.style.setProperty('--bg-blur-amount', `${blur}px`);
+  document.documentElement.style.setProperty('--bg-size', fitMode);
+
+  document.body.classList.remove('fit-cover', 'fit-contain', 'fit-auto');
+  document.body.classList.add(`fit-${fitMode}`);
   
   if (elements.dimVal) elements.dimVal.textContent = dim;
   if (elements.blurVal) elements.blurVal.textContent = blur;
@@ -824,6 +835,10 @@ function openSettingsModal() {
   const mode = appState.config.sourceMode || 'pinterest-board';
   elements.selectSourceMode.value = mode;
   updateFormVisibility(mode);
+
+  if (elements.selectFitMode) {
+    elements.selectFitMode.value = appState.config.fitMode || 'cover';
+  }
 
   elements.inputUsername.value = appState.config.username || 'pinterest';
   elements.inputBoard.value = appState.config.board || 'wallpapers';
@@ -1004,6 +1019,7 @@ function setupEventListeners() {
     const newUsername = sanitizeHandle(elements.inputUsername.value) || 'pinterest';
     const newBoard = sanitizeBoard(elements.inputBoard.value) || 'wallpapers';
     const newDirectUrl = elements.inputDirectUrl.value.trim();
+    const newFitMode = elements.selectFitMode?.value || 'cover';
     const newInterval = Math.max(5, parseInt(elements.inputInterval.value, 10) || 30);
     const newTimeFormat = elements.inputTimeFormat.value || '12h';
     const newDim = parseInt(elements.inputDim.value, 10) || 25;
@@ -1014,6 +1030,7 @@ function setupEventListeners() {
       username: newUsername,
       board: newBoard,
       directUrl: newDirectUrl,
+      fitMode: newFitMode,
       interval: newInterval,
       timeFormat: newTimeFormat,
       dim: newDim,
@@ -1039,6 +1056,10 @@ function setupEventListeners() {
   elements.resetBtn.addEventListener('click', async () => {
     elements.selectSourceMode.value = DEFAULT_CONFIG.sourceMode;
     updateFormVisibility(DEFAULT_CONFIG.sourceMode);
+
+    if (elements.selectFitMode) {
+      elements.selectFitMode.value = DEFAULT_CONFIG.fitMode;
+    }
 
     elements.inputUsername.value = DEFAULT_CONFIG.username;
     elements.inputBoard.value = DEFAULT_CONFIG.board;

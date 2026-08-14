@@ -10,7 +10,8 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- Dual Background Layers for Seamless Crossfade (Enforced Cover & Center Auto-Cropping) -->
+  <!-- Dual Background Layers for Seamless Crossfade & Ambient Backdrop for Contain/Original modes -->
+  <div id="bg-ambient" class="bg-ambient-layer" aria-hidden="true"></div>
   <div id="bg-1" class="bg-layer active" aria-hidden="true"></div>
   <div id="bg-2" class="bg-layer" aria-hidden="true"></div>
 
@@ -277,6 +278,19 @@
             </div>
             <span class="field-hint">Customize clock format</span>
           </div>
+        </div>
+
+        <!-- Wallpaper Scaling & Fit Mode -->
+        <div class="form-group">
+          <label for="select-fit-mode">Wallpaper Scaling & Crop Mode</label>
+          <div class="select-wrapper">
+            <select id="select-fit-mode" name="fitMode">
+              <option value="cover">Crop & Fill Screen (Cover — No Black Bars)</option>
+              <option value="contain">Fit Entire Image (No Cropping / Contain)</option>
+              <option value="auto">Original Dimensions (1:1 Native Resolution / Unscaled)</option>
+            </select>
+          </div>
+          <span class="field-hint">Choose whether to crop image to screen or keep original dimensions</span>
         </div>
 
         <!-- Dim & Vignette Sliders -->
