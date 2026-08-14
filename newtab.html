@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Tab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Dual Background Layers for Seamless Crossfade -->
+  <div id="bg-1" class="bg-layer active" aria-hidden="true"></div>
+  <div id="bg-2" class="bg-layer" aria-hidden="true"></div>
+
+  <!-- Radial Vignette Overlay for Readability -->
+  <div class="vignette-overlay" aria-hidden="true"></div>
+
+  <!-- Main Viewport Layout -->
+  <div class="app-container">
+    
+    <!-- Top Bar: Current Pin Info & Quick Action Floating Dock -->
+    <header class="top-bar">
+      <div id="wallpaper-info" class="wallpaper-info" title="Current wallpaper details">
+        <a id="pin-link" href="#" target="_blank" rel="noopener noreferrer" class="pin-link glass-pill">
+          <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0a12 12 0 0 0-4.37 23.17c-.07-.99-.13-2.52.03-3.61.14-.98.92-3.92.92-3.92s-.23-.47-.23-1.16c0-1.09.63-1.9 1.42-1.9.67 0 .99.5 1 .1 1.1 0 .69-.44 1.73-.67 2.69-.19.78.39 1.42 1.16 1.42 1.39 0 2.46-1.47 2.46-3.59 0-1.88-1.35-3.19-3.28-3.19-2.4 0-3.8 1.8-3.8 3.66 0 .72.28 1.5.63 1.92.07.08.08.16.06.24-.07.28-.22.88-.25 1-.04.16-.13.2-.3.12-1.11-.52-1.81-2.14-1.81-3.45 0-2.81 2.04-5.39 5.88-5.39 3.09 0 5.49 2.2 5.49 5.14 0 3.07-1.93 5.54-4.62 5.54-.9 0-1.75-.47-2.04-1.02l-.56 2.12c-.2 1.05-.75 2.37-1.12 3.19A12 12 0 1 0 12 0z"/>
+          </svg>
+          <span id="pin-title" class="pin-title">Pinterest Wallpaper</span>
+        </a>
+      </div>
+
+      <div class="top-actions">
+        <!-- Manual Wallpaper Navigation -->
+        <button id="prev-btn" class="glass-btn icon-btn" title="Previous Wallpaper" aria-label="Previous Wallpaper">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+        </button>
+
+        <button id="pause-btn" class="glass-btn icon-btn" title="Pause / Play Cycling" aria-label="Pause / Play Cycling">
+          <svg id="pause-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6" y="4" width="4" height="16"></rect>
+            <rect x="14" y="4" width="4" height="16"></rect>
+          </svg>
+          <svg id="play-icon" class="hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+        </button>
+
+        <button id="next-btn" class="glass-btn icon-btn" title="Next Wallpaper" aria-label="Next Wallpaper">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+
+        <!-- Settings Modal Trigger -->
+        <button id="settings-btn" class="glass-btn icon-btn" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Central Hero Container: Clock, Date, and Sleek Web Search -->
+    <main class="center-content">
+      <div class="clock-container">
+        <h1 id="time" class="time-display">--:--</h1>
+        <p id="date" class="date-display">Loading...</p>
+      </div>
+
+      <!-- Quick Web Search Bar -->
+      <form id="search-form" class="search-form" action="https://www.google.com/search" method="get">
+        <div class="search-bar glass-panel">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="search-input" name="q" placeholder="Search the web or type a URL..." autocomplete="off" spellcheck="false">
+        </div>
+      </form>
+    </main>
+
+    <!-- Bottom Section: Native Chrome Shortcuts Dock -->
+    <footer class="bottom-dock">
+      <div id="shortcuts" class="shortcuts-container glass-panel" role="region" aria-label="Top Visited Sites">
+        <!-- Dynamic Shortcut Tiles injected via newtab.js -->
+        <div class="shortcuts-loading">
+          <span class="pulse-dot"></span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Settings Dialog Modal -->
+  <dialog id="settings-dialog" class="settings-modal glass-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-icon-badge">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 0a12 12 0 0 0-4.37 23.17c-.07-.99-.13-2.52.03-3.61.14-.98.92-3.92.92-3.92s-.23-.47-.23-1.16c0-1.09.63-1.9 1.42-1.9.67 0 .99.5 1 .1 1.1 0 .69-.44 1.73-.67 2.69-.19.78.39 1.42 1.16 1.42 1.39 0 2.46-1.47 2.46-3.59 0-1.88-1.35-3.19-3.28-3.19-2.4 0-3.8 1.8-3.8 3.66 0 .72.28 1.5.63 1.92.07.08.08.16.06.24-.07.28-.22.88-.25 1-.04.16-.13.2-.3.12-1.11-.52-1.81-2.14-1.81-3.45 0-2.81 2.04-5.39 5.88-5.39 3.09 0 5.49 2.2 5.49 5.14 0 3.07-1.93 5.54-4.62 5.54-.9 0-1.75-.47-2.04-1.02l-.56 2.12c-.2 1.05-.75 2.37-1.12 3.19A12 12 0 1 0 12 0z"/>
+            </svg>
+          </div>
+          <div>
+            <h2>Wallpaper & Tab Settings</h2>
+            <p class="modal-subtitle">Configure your dynamic Pinterest board stream</p>
+          </div>
+        </div>
+        <button id="close-modal-btn" class="close-btn glass-btn icon-btn" aria-label="Close modal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <form id="settings-form" class="settings-form" method="dialog">
+        <!-- Quick Presets Carousel/Chips -->
+        <div class="form-group">
+          <label class="section-label">Aesthetic Board Presets</label>
+          <div class="preset-chips">
+            <button type="button" class="preset-chip" data-user="pinterest" data-board="wallpapers">📌 Default Wallpapers</button>
+            <button type="button" class="preset-chip" data-user="designmilk" data-board="architecture">🏛️ Architecture</button>
+            <button type="button" class="preset-chip" data-user="nasa" data-board="space-wallpapers">🌌 Space & Cosmic</button>
+            <button type="button" class="preset-chip" data-user="natgeo" data-board="landscapes">🏔️ Wild Landscapes</button>
+            <button type="button" class="preset-chip" data-user="artstation" data-board="concept-art">🎨 Concept Art</button>
+            <button type="button" class="preset-chip" data-user="unsplash" data-board="minimalist-desktop">✨ Minimalist</button>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <!-- Pinterest Username -->
+          <div class="form-group">
+            <label for="input-username">Pinterest Username</label>
+            <div class="input-wrapper">
+              <span class="input-prefix">@</span>
+              <input type="text" id="input-username" name="username" placeholder="e.g. pinterest" required autocomplete="off" spellcheck="false">
+            </div>
+            <span class="field-hint">The creator or profile handle</span>
+          </div>
+
+          <!-- Board Slug -->
+          <div class="form-group">
+            <label for="input-board">Board Slug / Name</label>
+            <div class="input-wrapper">
+              <input type="text" id="input-board" name="board" placeholder="e.g. wallpapers" required autocomplete="off" spellcheck="false">
+            </div>
+            <span class="field-hint">The board URL slug (e.g. aesthetic-wallpapers)</span>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <!-- Cycle Interval -->
+          <div class="form-group">
+            <label for="input-interval">Cycle Interval (Seconds)</label>
+            <div class="input-wrapper">
+              <input type="number" id="input-interval" name="interval" min="5" max="3600" step="1" value="30" required>
+              <span class="input-suffix">sec</span>
+            </div>
+            <span class="field-hint">Min 5 seconds, max 3600 (1 hour)</span>
+          </div>
+
+          <!-- Time Format -->
+          <div class="form-group">
+            <label for="input-timeformat">Clock Display Format</label>
+            <div class="select-wrapper">
+              <select id="input-timeformat" name="timeFormat">
+                <option value="12h">12-Hour (05:30 PM)</option>
+                <option value="24h">24-Hour (17:30)</option>
+              </select>
+            </div>
+            <span class="field-hint">Customize new tab clock style</span>
+          </div>
+        </div>
+
+        <!-- Dim & Vignette Sliders -->
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="input-dim">Background Overlay Dim (<span id="dim-val">25</span>%)</label>
+            <input type="range" id="input-dim" name="dim" min="0" max="80" value="25" class="slider">
+          </div>
+
+          <div class="form-group">
+            <label for="input-blur">Background Blur (<span id="blur-val">0</span>px)</label>
+            <input type="range" id="input-blur" name="blur" min="0" max="20" value="0" class="slider">
+          </div>
+        </div>
+
+        <!-- Live RSS Feed URL Preview & Status -->
+        <div id="status-container" class="status-box">
+          <span id="status-icon" class="status-indicator"></span>
+          <span id="status-msg">Ready to fetch Pinterest feed.</span>
+        </div>
+
+        <!-- Form Actions -->
+        <div class="modal-footer">
+          <button type="button" id="reset-btn" class="glass-btn secondary-btn">Reset Defaults</button>
+          <div class="modal-actions-right">
+            <button type="button" id="cancel-btn" class="glass-btn secondary-btn">Cancel</button>
+            <button type="submit" id="save-btn" class="save-btn glass-btn primary-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                <polyline points="7 3 7 8 15 8"></polyline>
+              </svg>
+              Save & Refresh
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="newtab.js"></script>
+</body>
+</html>
