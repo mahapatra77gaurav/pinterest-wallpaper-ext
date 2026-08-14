@@ -183,6 +183,7 @@
           <label for="select-source-mode">Wallpaper Sourcing Mode</label>
           <div class="select-wrapper">
             <select id="select-source-mode" name="sourceMode">
+              <option value="pinterest-search">🔍 Pinterest Search / Keywords</option>
               <option value="pinterest-both">🌟 Both (All Saved Pins & Feed Stream)</option>
               <option value="pinterest-saved">📌 All My Saved Pins (Profile & Boards)</option>
               <option value="pinterest-feed">⚡ Latest User Feed (feed.rss)</option>
@@ -195,6 +196,22 @@
         </div>
 
         <!-- 2. Conditional Form Fields -->
+        
+        <!-- Pinterest Search Query (Shown for Search Mode) -->
+        <div id="group-pinterest-search" class="form-group conditional-group">
+          <label for="input-search-query">Pinterest Search Query</label>
+          <div class="input-wrapper">
+            <input type="text" id="input-search-query" name="searchQuery" placeholder="e.g. 4k dark cyberpunk wallpaper, lofi aesthetic" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="preset-chips" id="search-preset-chips">
+            <button type="button" class="preset-chip search-chip" data-query="4k dark cyberpunk wallpaper">🌌 4K Cyberpunk</button>
+            <button type="button" class="preset-chip search-chip" data-query="minimalist desktop wallpaper 4k">✨ Minimalist 4K</button>
+            <button type="button" class="preset-chip search-chip" data-query="studio ghibli aesthetic wallpaper">🏯 Studio Ghibli</button>
+            <button type="button" class="preset-chip search-chip" data-query="moody dark aesthetic landscape wallpaper">🏔️ Dark Landscape</button>
+            <button type="button" class="preset-chip search-chip" data-query="cozy lofi room aesthetic desktop">☕ Cozy Lofi</button>
+          </div>
+          <span class="field-hint">Search any keyword, theme, or aesthetic to stream live matching wallpapers</span>
+        </div>
         
         <!-- Pinterest Board Presets (Shown for Board mode) -->
         <div id="group-presets" class="form-group conditional-group">

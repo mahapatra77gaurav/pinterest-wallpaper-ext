@@ -8,7 +8,8 @@
 // =============================================================================
 
 const DEFAULT_CONFIG = {
-  sourceMode: 'pinterest-both', // 'pinterest-both' | 'pinterest-saved' | 'pinterest-feed' | 'pinterest-board' | 'direct-url' | 'local-upload'
+  sourceMode: 'pinterest-search', // 'pinterest-search' | 'pinterest-both' | 'pinterest-saved' | 'pinterest-feed' | 'pinterest-board' | 'direct-url' | 'local-upload'
+  searchQuery: '4k dark cyberpunk wallpaper',
   username: 'pinterest',
   board: 'wallpapers',
   directUrl: '',
@@ -53,10 +54,13 @@ const FALLBACK_WALLPAPERS = [
 let appState = {
   config: { ...DEFAULT_CONFIG },
   userShortcuts: [],
-  wallpapers: [],
+  wallpaperQueue: [], // Lightweight queue of wallpaper metadata
+  wallpapers: [],     // Active rotation
   currentIndex: 0,
-  activeLayer: 1, // 1 for #bg-1, 2 for #bg-2
+  activeLayer: 1,     // 1 for #bg-1, 2 for #bg-2
   cycleTimer: null,
+  preloadTimer: null,
+  preloadedCache: new Map(), // In-memory image objects cache (current + next only)
   isPaused: false,
   isLoadingFeed: false,
   pendingLocalBase64: null,
@@ -91,6 +95,8 @@ const elements = {
   // Settings Form Inputs
   selectSourceMode: document.getElementById('select-source-mode'),
   selectFitMode: document.getElementById('select-fit-mode'),
+  groupPinterestSearch: document.getElementById('group-pinterest-search'),
+  inputSearchQuery: document.getElementById('input-search-query'),
   groupPresets: document.getElementById('group-presets'),
   groupPinterestUser: document.getElementById('group-pinterest-user'),
   groupPinterestBoard: document.getElementById('group-pinterest-board'),
@@ -117,6 +123,7 @@ const elements = {
   statusMsg: document.getElementById('status-msg'),
   statusIcon: document.getElementById('status-icon'),
   presetChips: document.querySelectorAll('.preset-chip'),
+  searchChips: document.querySelectorAll('.search-chip'),
   toast: document.getElementById('toast'),
   searchForm: document.getElementById('search-form'),
   searchInput: document.getElementById('search-input'),
@@ -137,17 +144,24 @@ const elements = {
 async function loadConfig() {
   return new Promise((resolve) => {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.get(['pinterestConfig'], (result) => {
+      chrome.storage.local.get(['pinterestConfig', 'search_query'], (result) => {
+        let loaded = { ...DEFAULT_CONFIG };
         if (result && result.pinterestConfig) {
-          resolve({ ...DEFAULT_CONFIG, ...result.pinterestConfig });
-        } else {
-          resolve({ ...DEFAULT_CONFIG });
+          loaded = { ...loaded, ...result.pinterestConfig };
         }
+        if (result && result.search_query) {
+          loaded.searchQuery = result.search_query;
+        }
+        resolve(loaded);
       });
     } else {
       try {
         const saved = localStorage.getItem('pinterestConfig');
-        resolve(saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG });
+        const savedSearch = localStorage.getItem('search_query');
+        let loaded = { ...DEFAULT_CONFIG };
+        if (saved) loaded = { ...loaded, ...JSON.parse(saved) };
+        if (savedSearch) loaded.searchQuery = savedSearch;
+        resolve(loaded);
       } catch (e) {
         resolve({ ...DEFAULT_CONFIG });
       }
@@ -159,12 +173,16 @@ async function saveConfig(newConfig) {
   appState.config = { ...appState.config, ...newConfig };
   return new Promise((resolve) => {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.set({ pinterestConfig: appState.config }, () => {
-        resolve();
-      });
+      chrome.storage.local.set({ 
+        pinterestConfig: appState.config,
+        search_query: appState.config.searchQuery || ''
+      }, () => resolve());
     } else {
       try {
         localStorage.setItem('pinterestConfig', JSON.stringify(appState.config));
+        if (appState.config.searchQuery) {
+          localStorage.setItem('search_query', appState.config.searchQuery);
+        }
       } catch (e) {}
       resolve();
     }
@@ -812,23 +830,87 @@ async function fetchBoardPins(user, boardString) {
   return allPins;
 }
 
+/**
+ * Searches Pinterest keywords and returns high-resolution wallpaper pins
+ */
+async function fetchPinterestSearch(query) {
+  if (!query || !query.trim()) {
+    throw new Error('Please enter a search query (e.g., 4k dark cyberpunk wallpaper).');
+  }
+
+  const cleanQuery = query.trim();
+
+  // 1. Try fetching via background worker
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    try {
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'FETCH_PINTEREST_SEARCH', query: cleanQuery, maxPages: 4 }, (res) => {
+          if (chrome.runtime.lastError) {
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(res || { success: false, error: 'No response from worker' });
+          }
+        });
+      });
+
+      if (response && response.success && Array.isArray(response.data) && response.data.length > 0) {
+        return response.data;
+      }
+    } catch (e) {
+      console.warn('fetchPinterestSearch background worker error:', e);
+    }
+  }
+
+  // 2. Direct HTML search fallback
+  try {
+    const searchUrl = `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(cleanQuery)}&rs=typed`;
+    const html = await fetchRssContent(searchUrl);
+    const pins = extractPinsFromHtml(html, `${cleanQuery} Wallpaper`, `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(cleanQuery)}`);
+    if (pins && pins.length > 0) {
+      return pins;
+    }
+  } catch (e) {}
+
+  throw new Error(`No wallpapers found for "${cleanQuery}". Try another keyword.`);
+}
+
 // =============================================================================
-// Wallpaper Preloader & Dual-Layer Crossfade Cycler
+// Lazy Wallpaper Preloader & Sliding Window Buffer Engine
 // =============================================================================
 
+/**
+ * Preloads a single image and stores it in memory-efficient cache
+ */
 function preloadImage(wallpaper) {
+  if (!wallpaper || !wallpaper.url) {
+    return Promise.resolve({ success: false });
+  }
+
+  if (appState.preloadedCache.has(wallpaper.url)) {
+    return Promise.resolve({ success: true, src: wallpaper.url });
+  }
+
   return new Promise((resolve) => {
     const img = new Image();
     
     img.onload = () => {
+      // Keep cache size bounded to maximum 3 active images to prevent RAM buildup
+      if (appState.preloadedCache.size >= 4) {
+        const oldestKey = appState.preloadedCache.keys().next().value;
+        appState.preloadedCache.delete(oldestKey);
+      }
+      appState.preloadedCache.set(wallpaper.url, img);
       resolve({ success: true, src: wallpaper.url });
     };
 
     img.onerror = () => {
-      // If /originals/ resolution is unavailable, fallback to thumbnail/736x
+      // If /originals/ resolution fails, fallback to 736x
       if (wallpaper.fallbackUrl && wallpaper.fallbackUrl !== wallpaper.url) {
         const fallbackImg = new Image();
-        fallbackImg.onload = () => resolve({ success: true, src: wallpaper.fallbackUrl });
+        fallbackImg.onload = () => {
+          appState.preloadedCache.set(wallpaper.fallbackUrl, fallbackImg);
+          resolve({ success: true, src: wallpaper.fallbackUrl });
+        };
         fallbackImg.onerror = () => resolve({ success: false });
         fallbackImg.src = wallpaper.fallbackUrl;
       } else {
@@ -838,6 +920,18 @@ function preloadImage(wallpaper) {
 
     img.src = wallpaper.url;
   });
+}
+
+/**
+ * Lazy loads the NEXT upcoming image into memory buffer
+ */
+function preloadNextImmediateImage() {
+  if (appState.wallpapers.length <= 1) return;
+  const nextIdx = (appState.currentIndex + 1) % appState.wallpapers.length;
+  const nextItem = appState.wallpapers[nextIdx];
+  if (nextItem && !appState.preloadedCache.has(nextItem.url)) {
+    preloadImage(nextItem);
+  }
 }
 
 async function displayWallpaper(index, manual = false) {
@@ -865,7 +959,7 @@ async function displayWallpaper(index, manual = false) {
   appState.currentIndex = nextIndex;
   const currentItem = appState.wallpapers[nextIndex];
 
-  // Preload before crossfading
+  // Preload current before crossfading
   const result = await preloadImage(currentItem);
   const imageSrc = result.success ? (result.src || currentItem.url) : (currentItem.fallbackUrl || currentItem.url);
 
@@ -887,9 +981,40 @@ async function displayWallpaper(index, manual = false) {
   elements.pinLink.href = currentItem.link || '#';
   elements.pinLink.title = `View Source: ${currentItem.title}`;
 
+  // Update Settings Active Status with lazy count
+  updateActiveStatusLabel();
+
+  // Lazy Preload NEXT image into memory for zero-flash transition
+  preloadNextImmediateImage();
+
   if (manual) {
     resetCycleTimer();
   }
+}
+
+function updateActiveStatusLabel() {
+  const mode = appState.config.sourceMode || 'pinterest-search';
+  const total = appState.wallpapers.length;
+  const current = total > 0 ? (appState.currentIndex + 1) : 0;
+
+  let modeName = 'Pinterest';
+  if (mode === 'pinterest-search') {
+    modeName = `Search: "${appState.config.searchQuery || 'aesthetic'}"`;
+  } else if (mode === 'pinterest-both') {
+    modeName = `@${sanitizeHandle(appState.config.username) || 'pinterest'} (Saved + Feed)`;
+  } else if (mode === 'pinterest-saved') {
+    modeName = `@${sanitizeHandle(appState.config.username) || 'pinterest'} Saved Pins`;
+  } else if (mode === 'pinterest-feed') {
+    modeName = `@${sanitizeHandle(appState.config.username) || 'pinterest'} Feed`;
+  } else if (mode === 'pinterest-board') {
+    modeName = `@${sanitizeHandle(appState.config.username) || 'pinterest'}/${sanitizeBoard(appState.config.board) || 'wallpapers'}`;
+  } else if (mode === 'direct-url') {
+    modeName = 'Direct Image URL';
+  } else if (mode === 'local-upload') {
+    modeName = 'Local Image File';
+  }
+
+  updateStatus('ready', `Active: ${modeName} (Loaded ${current} of ${total} wallpapers)`);
 }
 
 function nextWallpaper(manual = true) {
@@ -909,6 +1034,13 @@ function startCycleTimer() {
   if (appState.isPaused || appState.wallpapers.length <= 1) return;
 
   const intervalMs = Math.max(5, appState.config.interval || 30) * 1000;
+  
+  // Preload next image 3 seconds before next cycle
+  const preloadAdvanceMs = Math.max(1000, intervalMs - 3000);
+  appState.preloadTimer = setTimeout(() => {
+    preloadNextImmediateImage();
+  }, preloadAdvanceMs);
+
   appState.cycleTimer = setInterval(() => {
     nextWallpaper(false);
   }, intervalMs);
@@ -918,6 +1050,10 @@ function stopCycleTimer() {
   if (appState.cycleTimer) {
     clearInterval(appState.cycleTimer);
     appState.cycleTimer = null;
+  }
+  if (appState.preloadTimer) {
+    clearTimeout(appState.preloadTimer);
+    appState.preloadTimer = null;
   }
 }
 
@@ -959,16 +1095,27 @@ async function loadWallpapersByMode(notify = false) {
   if (appState.isLoadingFeed) return;
   appState.isLoadingFeed = true;
 
-  const mode = appState.config.sourceMode || 'pinterest-both';
+  const mode = appState.config.sourceMode || 'pinterest-search';
   const user = sanitizeHandle(appState.config.username) || 'pinterest';
 
   try {
-    if (mode === 'pinterest-both') {
+    if (mode === 'pinterest-search') {
+      const query = (appState.config.searchQuery || '4k dark cyberpunk wallpaper').trim();
+      updateStatus('loading', `Searching Pinterest for "${query}"...`);
+      const pins = await fetchPinterestSearch(query);
+
+      appState.wallpaperQueue = [...pins];
+      appState.wallpapers = shuffleArray([...pins]);
+      updateActiveStatusLabel();
+      if (notify) showToast(`Found ${pins.length} wallpapers for "${query}"`);
+
+    } else if (mode === 'pinterest-both') {
       updateStatus('loading', `Aggregating all saved pins & feed for @${user}...`);
       const pins = await fetchBothPins(user);
       
+      appState.wallpaperQueue = [...pins];
       appState.wallpapers = shuffleArray([...pins]);
-      updateStatus('ready', `Active: @${user} (All Saved + Feed: ${pins.length} wallpapers)`);
+      updateActiveStatusLabel();
       if (notify) showToast(`Loaded ${pins.length} wallpapers from @${user}`);
 
     } else if (mode === 'pinterest-saved') {
@@ -978,8 +1125,9 @@ async function loadWallpapersByMode(notify = false) {
         throw new Error(`No saved pins found on profile for @${user}.`);
       }
 
+      appState.wallpaperQueue = [...pins];
       appState.wallpapers = shuffleArray([...pins]);
-      updateStatus('ready', `Active: @${user} Saved Pins (${pins.length} wallpapers)`);
+      updateActiveStatusLabel();
       if (notify) showToast(`Loaded ${pins.length} saved pins from @${user}`);
 
     } else if (mode === 'pinterest-feed') {
@@ -989,8 +1137,9 @@ async function loadWallpapersByMode(notify = false) {
         throw new Error(`No pins found in RSS feed for @${user}.`);
       }
 
+      appState.wallpaperQueue = [...pins];
       appState.wallpapers = shuffleArray([...pins]);
-      updateStatus('ready', `Active: @${user} Latest Feed (${pins.length} wallpapers)`);
+      updateActiveStatusLabel();
       if (notify) showToast(`Loaded ${pins.length} wallpapers from @${user} Feed`);
 
     } else if (mode === 'pinterest-board') {
@@ -998,8 +1147,9 @@ async function loadWallpapersByMode(notify = false) {
       updateStatus('loading', `Fetching board(s) "${board}" for @${user}...`);
       const pins = await fetchBoardPins(user, board);
 
+      appState.wallpaperQueue = [...pins];
       appState.wallpapers = shuffleArray([...pins]);
-      updateStatus('ready', `Active: @${user}/${board} (${pins.length} wallpapers)`);
+      updateActiveStatusLabel();
       if (notify) showToast(`Loaded ${pins.length} wallpapers from board(s)`);
 
     } else if (mode === 'direct-url') {
@@ -1007,13 +1157,14 @@ async function loadWallpapersByMode(notify = false) {
       if (!url) {
         throw new Error('Please enter a valid Direct Image URL in settings.');
       }
-      appState.wallpapers = [{
+      appState.wallpaperQueue = [{
         title: 'Custom Direct Wallpaper',
         url: url,
         fallbackUrl: url,
         link: url
       }];
-      updateStatus('ready', 'Active: Direct Image URL');
+      appState.wallpapers = [...appState.wallpaperQueue];
+      updateActiveStatusLabel();
       if (notify) showToast('Direct image wallpaper applied');
 
     } else if (mode === 'local-upload') {
@@ -1021,13 +1172,14 @@ async function loadWallpapersByMode(notify = false) {
       if (!base64) {
         throw new Error('No local image uploaded yet. Upload an image in settings.');
       }
-      appState.wallpapers = [{
+      appState.wallpaperQueue = [{
         title: appState.config.localImageName || 'Local File Wallpaper',
         url: base64,
         fallbackUrl: base64,
         link: '#'
       }];
-      updateStatus('ready', 'Active: Local Image File');
+      appState.wallpapers = [...appState.wallpaperQueue];
+      updateActiveStatusLabel();
       if (notify) showToast('Local image wallpaper applied');
     }
 
@@ -1043,6 +1195,7 @@ async function loadWallpapersByMode(notify = false) {
       showToast(`${err.message}. Using aesthetic fallbacks.`);
     }
 
+    appState.wallpaperQueue = [...FALLBACK_WALLPAPERS];
     appState.wallpapers = [...FALLBACK_WALLPAPERS];
     appState.currentIndex = 0;
     await displayWallpaper(0);
@@ -1057,6 +1210,7 @@ async function loadWallpapersByMode(notify = false) {
 // =============================================================================
 
 function updateFormVisibility(mode) {
+  if (elements.groupPinterestSearch) elements.groupPinterestSearch.classList.add('hidden');
   elements.groupPresets.classList.add('hidden');
   elements.groupPinterestUser.classList.add('hidden');
   elements.groupPinterestBoard.classList.add('hidden');
@@ -1064,7 +1218,10 @@ function updateFormVisibility(mode) {
   elements.groupLocalUpload.classList.add('hidden');
   elements.groupInterval.classList.add('hidden');
 
-  if (mode === 'pinterest-both' || mode === 'pinterest-saved' || mode === 'pinterest-feed') {
+  if (mode === 'pinterest-search') {
+    if (elements.groupPinterestSearch) elements.groupPinterestSearch.classList.remove('hidden');
+    elements.groupInterval.classList.remove('hidden');
+  } else if (mode === 'pinterest-both' || mode === 'pinterest-saved' || mode === 'pinterest-feed') {
     elements.groupPinterestUser.classList.remove('hidden');
     elements.groupInterval.classList.remove('hidden');
   } else if (mode === 'pinterest-board') {
@@ -1109,12 +1266,16 @@ function updateStatus(type, msg) {
 }
 
 function openSettingsModal() {
-  const mode = appState.config.sourceMode || 'pinterest-board';
+  const mode = appState.config.sourceMode || 'pinterest-search';
   elements.selectSourceMode.value = mode;
   updateFormVisibility(mode);
 
   if (elements.selectFitMode) {
     elements.selectFitMode.value = appState.config.fitMode || 'cover';
+  }
+
+  if (elements.inputSearchQuery) {
+    elements.inputSearchQuery.value = appState.config.searchQuery || '4k dark cyberpunk wallpaper';
   }
 
   elements.inputUsername.value = appState.config.username || 'pinterest';
@@ -1275,7 +1436,7 @@ function setupEventListeners() {
     document.documentElement.style.setProperty('--bg-blur-amount', `${val}px`);
   });
 
-  // Preset Chips
+  // Board Preset Chips
   elements.presetChips.forEach((chip) => {
     chip.addEventListener('click', () => {
       elements.presetChips.forEach(c => c.classList.remove('active'));
@@ -1288,11 +1449,26 @@ function setupEventListeners() {
     });
   });
 
+  // Search Suggestion Chips
+  elements.searchChips.forEach((chip) => {
+    chip.addEventListener('click', () => {
+      elements.searchChips.forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+
+      const query = chip.dataset.query;
+      if (query && elements.inputSearchQuery) {
+        elements.inputSearchQuery.value = query;
+        elements.inputSearchQuery.focus();
+      }
+    });
+  });
+
   // Settings Form Submit
   elements.settingsForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     
     const mode = elements.selectSourceMode.value;
+    const newSearchQuery = (elements.inputSearchQuery?.value || '4k dark cyberpunk wallpaper').trim();
     const newUsername = sanitizeHandle(elements.inputUsername.value) || 'pinterest';
     const newBoard = sanitizeBoard(elements.inputBoard.value) || 'wallpapers';
     const newDirectUrl = elements.inputDirectUrl.value.trim();
@@ -1304,6 +1480,7 @@ function setupEventListeners() {
 
     const updatedConfig = {
       sourceMode: mode,
+      searchQuery: newSearchQuery,
       username: newUsername,
       board: newBoard,
       directUrl: newDirectUrl,
@@ -1338,6 +1515,10 @@ function setupEventListeners() {
       elements.selectFitMode.value = DEFAULT_CONFIG.fitMode;
     }
 
+    if (elements.inputSearchQuery) {
+      elements.inputSearchQuery.value = DEFAULT_CONFIG.searchQuery;
+    }
+
     elements.inputUsername.value = DEFAULT_CONFIG.username;
     elements.inputBoard.value = DEFAULT_CONFIG.board;
     elements.inputDirectUrl.value = DEFAULT_CONFIG.directUrl;
@@ -1350,6 +1531,7 @@ function setupEventListeners() {
     elements.blurVal.textContent = DEFAULT_CONFIG.blur;
 
     elements.presetChips.forEach(c => c.classList.remove('active'));
+    elements.searchChips.forEach(c => c.classList.remove('active'));
     elements.localPreviewContainer.classList.add('hidden');
     appState.pendingLocalBase64 = null;
     appState.pendingLocalName = null;
