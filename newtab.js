@@ -8,7 +8,7 @@
 // =============================================================================
 
 const DEFAULT_CONFIG = {
-  sourceMode: 'pinterest-board', // 'pinterest-board' | 'pinterest-feed' | 'direct-url' | 'local-upload'
+  sourceMode: 'pinterest-both', // 'pinterest-both' | 'pinterest-saved' | 'pinterest-feed' | 'pinterest-board' | 'direct-url' | 'local-upload'
   username: 'pinterest',
   board: 'wallpapers',
   directUrl: '',
@@ -458,14 +458,13 @@ async function fetchRssContent(url) {
 }
 
 // =============================================================================
-// Pinterest RSS Parser & High-Resolution Image Upgrade Engine
+// Comprehensive Pinterest Multi-Source Extraction & Aggregator Engine
 // =============================================================================
 
 function sanitizeHandle(str) {
   if (!str) return '';
   let clean = str.trim();
   
-  // If user pasted a full URL (e.g. https://www.pinterest.com/username/ or https://pinterest.com/username/feed.rss)
   try {
     if (/^https?:\/\//i.test(clean)) {
       const parsed = new URL(clean);
@@ -483,7 +482,6 @@ function sanitizeBoard(str) {
   if (!str) return '';
   let clean = str.trim();
 
-  // If user pasted a full board URL (e.g. https://www.pinterest.com/username/board-name/)
   try {
     if (/^https?:\/\//i.test(clean)) {
       const parsed = new URL(clean);
@@ -504,28 +502,67 @@ function upgradePinterestImageUrl(rawUrl) {
   return rawUrl.replace(/\/(?:[0-9]+x[0-9]*|[0-9]+x)\//i, '/originals/');
 }
 
-async function fetchPinterestRSS(rssUrl, fallbackTitle) {
-  const xmlText = await fetchRssContent(rssUrl);
+/**
+ * Extracts unique high-resolution pin wallpapers directly from HTML page content
+ */
+function extractPinsFromHtml(html, defaultTitle, defaultLink) {
+  if (!html) return [];
+  const pinRegex = /https:\/\/i\.pinimg\.com\/(?:236x|474x|564x|736x|originals)\/([a-f0-9\/]+)\.(jpg|png|webp)/gi;
+  const pins = [];
+  const seen = new Set();
+  let match;
 
+  while ((match = pinRegex.exec(html)) !== null) {
+    const hash = match[1];
+    const ext = match[2];
+    
+    // Filter out UI avatars or micro-thumbnails
+    if (hash.includes('75x75') || hash.includes('150x150') || hash.includes('user/')) {
+      continue;
+    }
+    
+    const originalUrl = `https://i.pinimg.com/originals/${hash}.${ext}`;
+    const fallbackUrl = `https://i.pinimg.com/736x/${hash}.${ext}`;
+    
+    if (!seen.has(hash)) {
+      seen.add(hash);
+      pins.push({
+        title: defaultTitle || 'Pinterest Wallpaper',
+        url: originalUrl,
+        fallbackUrl: fallbackUrl,
+        link: defaultLink || 'https://www.pinterest.com'
+      });
+    }
+  }
+
+  return pins;
+}
+
+/**
+ * Extracts pins from a Pinterest RSS XML document
+ */
+function extractPinsFromRssXml(xmlText, fallbackTitle, fallbackLink) {
+  if (!xmlText) return [];
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
 
   if (xmlDoc.querySelector('parsererror')) {
-    throw new Error('Invalid XML response received from Pinterest.');
+    return [];
   }
 
   const items = xmlDoc.querySelectorAll('item');
   if (!items || items.length === 0) {
-    throw new Error('No pins found in this feed or board. It may be empty or private.');
+    return [];
   }
 
-  const parsedWallpapers = [];
+  const pins = [];
+  const seen = new Set();
 
   items.forEach((item) => {
     let rawTitle = item.querySelector('title')?.textContent || '';
     rawTitle = rawTitle.trim();
     const title = rawTitle || fallbackTitle || 'Pinterest Wallpaper';
-    const link = item.querySelector('link')?.textContent || 'https://www.pinterest.com';
+    const link = item.querySelector('link')?.textContent || fallbackLink || 'https://www.pinterest.com';
     
     let rawImgUrl = null;
 
@@ -536,7 +573,7 @@ async function fetchPinterestRSS(rssUrl, fallbackTitle) {
       rawImgUrl = match[1];
     }
 
-    // 2. Check enclosure tag
+    // 2. Check enclosure
     if (!rawImgUrl) {
       const enclosure = item.querySelector('enclosure');
       if (enclosure && enclosure.getAttribute('url')) {
@@ -544,7 +581,7 @@ async function fetchPinterestRSS(rssUrl, fallbackTitle) {
       }
     }
 
-    // 3. Check media:content tag
+    // 3. Check media:content
     if (!rawImgUrl) {
       const mediaContent = item.getElementsByTagName('media:content')[0];
       if (mediaContent && mediaContent.getAttribute('url')) {
@@ -554,20 +591,191 @@ async function fetchPinterestRSS(rssUrl, fallbackTitle) {
 
     if (rawImgUrl) {
       const highResUrl = upgradePinterestImageUrl(rawImgUrl);
-      parsedWallpapers.push({
-        title: title.replace(/&amp;/g, '&'),
-        url: highResUrl,
-        fallbackUrl: rawImgUrl,
-        link: link
-      });
+      if (!seen.has(highResUrl)) {
+        seen.add(highResUrl);
+        pins.push({
+          title: title.replace(/&amp;/g, '&'),
+          url: highResUrl,
+          fallbackUrl: rawImgUrl,
+          link: link
+        });
+      }
     }
   });
 
-  if (parsedWallpapers.length === 0) {
-    throw new Error('No valid images found in the RSS feed.');
+  return pins;
+}
+
+/**
+ * Discovers user board slugs from user profile HTML
+ */
+function findBoardSlugsFromHtml(html, user) {
+  if (!html || !user) return [];
+  const regex = new RegExp(`href=["']\\/${user}\\/([^\\/"'?]+)\\/?["']`, 'gi');
+  const boards = new Set();
+  let m;
+  while ((m = regex.exec(html)) !== null) {
+    const slug = m[1].toLowerCase();
+    if (!['saved', '_saved', 'created', '_created', 'pins', '_pins', 'followers', 'following', 'repins'].includes(slug)) {
+      boards.add(slug);
+    }
+  }
+  return [...boards];
+}
+
+/**
+ * Fetches feed.rss for a user
+ */
+async function fetchFeedPins(user) {
+  const rssUrl = `https://www.pinterest.com/${encodeURIComponent(user)}/feed.rss`;
+  const xml = await fetchRssContent(rssUrl);
+  return extractPinsFromRssXml(xml, `@${user} Feed Pin`, `https://www.pinterest.com/${user}/`);
+}
+
+/**
+ * Aggregates all saved pins across profile, saved tab, and all detected boards
+ */
+async function fetchAllSavedPins(user) {
+  const allPins = [];
+  const seenUrls = new Set();
+
+  function addPins(list) {
+    list.forEach(p => {
+      if (!seenUrls.has(p.url)) {
+        seenUrls.add(p.url);
+        allPins.push(p);
+      }
+    });
   }
 
-  return parsedWallpapers;
+  // 1. Fetch Profile HTML
+  try {
+    const profileHtml = await fetchRssContent(`https://www.pinterest.com/${encodeURIComponent(user)}/`);
+    const profilePins = extractPinsFromHtml(profileHtml, `@${user} Pin`, `https://www.pinterest.com/${user}/`);
+    addPins(profilePins);
+
+    // 2. Discover user's boards from profile and fetch their board RSS
+    const boards = findBoardSlugsFromHtml(profileHtml, user);
+    if (boards.length > 0) {
+      const boardFetches = boards.slice(0, 8).map(async (boardSlug) => {
+        try {
+          const boardRssUrl = `https://www.pinterest.com/${encodeURIComponent(user)}/${encodeURIComponent(boardSlug)}.rss`;
+          const boardXml = await fetchRssContent(boardRssUrl);
+          return extractPinsFromRssXml(boardXml, `@${user}/${boardSlug}`, `https://www.pinterest.com/${user}/${boardSlug}`);
+        } catch (e) {
+          return [];
+        }
+      });
+
+      const boardResults = await Promise.allSettled(boardFetches);
+      boardResults.forEach(res => {
+        if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+          addPins(res.value);
+        }
+      });
+    }
+  } catch (e) {
+    console.warn('Saved pins profile fetch issue:', e);
+  }
+
+  // 3. Fetch _saved/ tab HTML
+  try {
+    const savedHtml = await fetchRssContent(`https://www.pinterest.com/${encodeURIComponent(user)}/_saved/`);
+    const savedPins = extractPinsFromHtml(savedHtml, `@${user} Saved Pin`, `https://www.pinterest.com/${user}/_saved/`);
+    addPins(savedPins);
+  } catch (e) {}
+
+  return allPins;
+}
+
+/**
+ * Combines both all saved pins and live user feed for maximum collection size
+ */
+async function fetchBothPins(user) {
+  const allPins = [];
+  const seenUrls = new Set();
+
+  function addPins(list) {
+    list.forEach(p => {
+      if (!seenUrls.has(p.url)) {
+        seenUrls.add(p.url);
+        allPins.push(p);
+      }
+    });
+  }
+
+  const [feedRes, savedRes] = await Promise.allSettled([
+    fetchFeedPins(user),
+    fetchAllSavedPins(user)
+  ]);
+
+  if (feedRes.status === 'fulfilled' && Array.isArray(feedRes.value)) {
+    addPins(feedRes.value);
+  }
+  if (savedRes.status === 'fulfilled' && Array.isArray(savedRes.value)) {
+    addPins(savedRes.value);
+  }
+
+  if (allPins.length === 0) {
+    throw new Error(`No pins found for @${user}. The account might be private or empty.`);
+  }
+
+  return allPins;
+}
+
+/**
+ * Fetches pins from one or multiple comma-separated boards
+ */
+async function fetchBoardPins(user, boardString) {
+  const allPins = [];
+  const seenUrls = new Set();
+
+  function addPins(list) {
+    list.forEach(p => {
+      if (!seenUrls.has(p.url)) {
+        seenUrls.add(p.url);
+        allPins.push(p);
+      }
+    });
+  }
+
+  const boards = boardString.split(',').map(b => sanitizeBoard(b)).filter(Boolean);
+  if (boards.length === 0) boards.push('wallpapers');
+
+  const fetches = boards.map(async (b) => {
+    const boardPins = [];
+    
+    // 1. Fetch Board RSS
+    try {
+      const rssUrl = `https://www.pinterest.com/${encodeURIComponent(user)}/${encodeURIComponent(b)}.rss`;
+      const xml = await fetchRssContent(rssUrl);
+      const rssPins = extractPinsFromRssXml(xml, `@${user}/${b}`, `https://www.pinterest.com/${user}/${b}`);
+      rssPins.forEach(p => boardPins.push(p));
+    } catch (e) {}
+
+    // 2. Fetch Board HTML page to extract extra pins
+    try {
+      const htmlUrl = `https://www.pinterest.com/${encodeURIComponent(user)}/${encodeURIComponent(b)}/`;
+      const html = await fetchRssContent(htmlUrl);
+      const htmlPins = extractPinsFromHtml(html, `@${user}/${b}`, `https://www.pinterest.com/${user}/${b}`);
+      htmlPins.forEach(p => boardPins.push(p));
+    } catch (e) {}
+
+    return boardPins;
+  });
+
+  const results = await Promise.allSettled(fetches);
+  results.forEach(res => {
+    if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+      addPins(res.value);
+    }
+  });
+
+  if (allPins.length === 0) {
+    throw new Error(`No pins found in board(s) for @${user}. Check the board slug.`);
+  }
+
+  return allPins;
 }
 
 // =============================================================================
@@ -601,9 +809,27 @@ function preloadImage(wallpaper) {
 async function displayWallpaper(index, manual = false) {
   if (appState.wallpapers.length === 0) return;
 
-  const safeIndex = (index + appState.wallpapers.length) % appState.wallpapers.length;
-  appState.currentIndex = safeIndex;
-  const currentItem = appState.wallpapers[safeIndex];
+  // Infinite wrap-around & reshuffle on cycle wrap
+  let nextIndex = index;
+  if (nextIndex >= appState.wallpapers.length) {
+    nextIndex = 0;
+    // Reshuffle wallpapers for endless non-repetitive variety
+    if (appState.wallpapers.length > 2) {
+      const current = appState.wallpapers[appState.currentIndex];
+      appState.wallpapers = shuffleArray([...appState.wallpapers]);
+      // Ensure we don't pick the same wallpaper immediately
+      if (appState.wallpapers[0].url === current?.url && appState.wallpapers.length > 1) {
+        const temp = appState.wallpapers[0];
+        appState.wallpapers[0] = appState.wallpapers[1];
+        appState.wallpapers[1] = temp;
+      }
+    }
+  } else if (nextIndex < 0) {
+    nextIndex = appState.wallpapers.length - 1;
+  }
+
+  appState.currentIndex = nextIndex;
+  const currentItem = appState.wallpapers[nextIndex];
 
   // Preload before crossfading
   const result = await preloadImage(currentItem);
@@ -699,31 +925,48 @@ async function loadWallpapersByMode(notify = false) {
   if (appState.isLoadingFeed) return;
   appState.isLoadingFeed = true;
 
-  const mode = appState.config.sourceMode || 'pinterest-board';
+  const mode = appState.config.sourceMode || 'pinterest-both';
+  const user = sanitizeHandle(appState.config.username) || 'pinterest';
 
   try {
-    if (mode === 'pinterest-board') {
-      const user = sanitizeHandle(appState.config.username) || 'pinterest';
-      const board = sanitizeBoard(appState.config.board) || 'wallpapers';
-      const rssUrl = `https://www.pinterest.com/${encodeURIComponent(user)}/${encodeURIComponent(board)}.rss`;
-      
-      updateStatus('loading', `Fetching @${user}/${board}...`);
-      const pins = await fetchPinterestRSS(rssUrl, `Pinterest: @${user}/${board}`);
+    if (mode === 'pinterest-both') {
+      updateStatus('loading', `Aggregating all saved pins & feed for @${user}...`);
+      const pins = await fetchBothPins(user);
       
       appState.wallpapers = shuffleArray([...pins]);
-      updateStatus('ready', `Active: @${user}/${board} (${pins.length} wallpapers)`);
-      if (notify) showToast(`Loaded ${pins.length} wallpapers from Pinterest Board`);
+      updateStatus('ready', `Active: @${user} (All Saved + Feed: ${pins.length} wallpapers)`);
+      if (notify) showToast(`Loaded ${pins.length} wallpapers from @${user}`);
+
+    } else if (mode === 'pinterest-saved') {
+      updateStatus('loading', `Fetching all saved pins & boards for @${user}...`);
+      const pins = await fetchAllSavedPins(user);
+      if (pins.length === 0) {
+        throw new Error(`No saved pins found on profile for @${user}.`);
+      }
+
+      appState.wallpapers = shuffleArray([...pins]);
+      updateStatus('ready', `Active: @${user} Saved Pins (${pins.length} wallpapers)`);
+      if (notify) showToast(`Loaded ${pins.length} saved pins from @${user}`);
 
     } else if (mode === 'pinterest-feed') {
-      const user = sanitizeHandle(appState.config.username) || 'pinterest';
-      const rssUrl = `https://www.pinterest.com/${encodeURIComponent(user)}/feed.rss`;
-      
-      updateStatus('loading', `Fetching feed for @${user}...`);
-      const pins = await fetchPinterestRSS(rssUrl, `Pinterest: @${user} Feed`);
-      
+      updateStatus('loading', `Fetching latest feed stream for @${user}...`);
+      const pins = await fetchFeedPins(user);
+      if (pins.length === 0) {
+        throw new Error(`No pins found in RSS feed for @${user}.`);
+      }
+
       appState.wallpapers = shuffleArray([...pins]);
-      updateStatus('ready', `Active: @${user} Feed (${pins.length} wallpapers)`);
+      updateStatus('ready', `Active: @${user} Latest Feed (${pins.length} wallpapers)`);
       if (notify) showToast(`Loaded ${pins.length} wallpapers from @${user} Feed`);
+
+    } else if (mode === 'pinterest-board') {
+      const board = sanitizeBoard(appState.config.board) || 'wallpapers';
+      updateStatus('loading', `Fetching board(s) "${board}" for @${user}...`);
+      const pins = await fetchBoardPins(user, board);
+
+      appState.wallpapers = shuffleArray([...pins]);
+      updateStatus('ready', `Active: @${user}/${board} (${pins.length} wallpapers)`);
+      if (notify) showToast(`Loaded ${pins.length} wallpapers from board(s)`);
 
     } else if (mode === 'direct-url') {
       const url = (appState.config.directUrl || '').trim();
@@ -787,13 +1030,13 @@ function updateFormVisibility(mode) {
   elements.groupLocalUpload.classList.add('hidden');
   elements.groupInterval.classList.add('hidden');
 
-  if (mode === 'pinterest-board') {
+  if (mode === 'pinterest-both' || mode === 'pinterest-saved' || mode === 'pinterest-feed') {
+    elements.groupPinterestUser.classList.remove('hidden');
+    elements.groupInterval.classList.remove('hidden');
+  } else if (mode === 'pinterest-board') {
     elements.groupPresets.classList.remove('hidden');
     elements.groupPinterestUser.classList.remove('hidden');
     elements.groupPinterestBoard.classList.remove('hidden');
-    elements.groupInterval.classList.remove('hidden');
-  } else if (mode === 'pinterest-feed') {
-    elements.groupPinterestUser.classList.remove('hidden');
     elements.groupInterval.classList.remove('hidden');
   } else if (mode === 'direct-url') {
     elements.groupDirectUrl.classList.remove('hidden');

@@ -183,13 +183,15 @@
           <label for="select-source-mode">Wallpaper Sourcing Mode</label>
           <div class="select-wrapper">
             <select id="select-source-mode" name="sourceMode">
-              <option value="pinterest-board">📌 Pinterest Board (https://pinterest.com/user/board.rss)</option>
-              <option value="pinterest-feed">⚡ Pinterest User Feed (https://pinterest.com/user/feed.rss)</option>
+              <option value="pinterest-both">🌟 Both (All Saved Pins & Feed Stream)</option>
+              <option value="pinterest-saved">📌 All My Saved Pins (Profile & Boards)</option>
+              <option value="pinterest-feed">⚡ Latest User Feed (feed.rss)</option>
+              <option value="pinterest-board">📁 Specific Pinterest Board(s)</option>
               <option value="direct-url">🔗 Direct Image URL</option>
               <option value="local-upload">📁 Local Image File Upload</option>
             </select>
           </div>
-          <span class="field-hint">Choose how wallpapers are fetched and displayed</span>
+          <span class="field-hint">Choose how wallpapers are fetched and aggregated</span>
         </div>
 
         <!-- 2. Conditional Form Fields -->
@@ -207,23 +209,23 @@
           </div>
         </div>
 
-        <!-- Pinterest Username (Shown for Board & Feed modes) -->
+        <!-- Pinterest Username (Shown for Pinterest modes) -->
         <div id="group-pinterest-user" class="form-group conditional-group">
           <label for="input-username">Pinterest Username</label>
           <div class="input-wrapper">
             <span class="input-prefix">@</span>
-            <input type="text" id="input-username" name="username" placeholder="e.g. pinterest" autocomplete="off" spellcheck="false">
+            <input type="text" id="input-username" name="username" placeholder="e.g. pinterest or mahapatragaurav77" autocomplete="off" spellcheck="false">
           </div>
-          <span class="field-hint">Pinterest profile handle</span>
+          <span class="field-hint">Your Pinterest profile handle</span>
         </div>
 
         <!-- Board Slug (Shown only for Board mode) -->
         <div id="group-pinterest-board" class="form-group conditional-group">
-          <label for="input-board">Board Slug / Name</label>
+          <label for="input-board">Board Slug(s) / Name</label>
           <div class="input-wrapper">
-            <input type="text" id="input-board" name="board" placeholder="e.g. wallpapers" autocomplete="off" spellcheck="false">
+            <input type="text" id="input-board" name="board" placeholder="e.g. wallpapers (or wallpapers, aesthetic)" autocomplete="off" spellcheck="false">
           </div>
-          <span class="field-hint">Board URL slug (e.g. wallpapers or aesthetic-landscapes)</span>
+          <span class="field-hint">Board slug or comma-separated boards (e.g. wallpapers, aesthetic)</span>
         </div>
 
         <!-- Direct Image URL (Shown only for Direct URL mode) -->
