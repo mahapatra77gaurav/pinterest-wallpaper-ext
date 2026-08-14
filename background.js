@@ -1,6 +1,6 @@
 /**
  * Pinterest Dynamic New Tab - Background Service Worker (Manifest V3)
- * Handles privileged network requests, multi-page bookmark pagination, search queries, and CORS bypass.
+ * Handles privileged network requests, single-page & multi-page bookmark pagination, search queries, and CORS bypass.
  */
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -33,6 +33,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
 
     return true; // Keep message port open for async sendResponse
+  }
+
+  // Single-page Search Pagination
+  if (message.type === 'FETCH_PINTEREST_SEARCH_PAGE' && message.query) {
+    fetchSearchSinglePage(message.query, message.bookmark || null)
+      .then((result) => {
+        sendResponse({
+          success: true,
+          data: result
+        });
+      })
+      .catch((err) => {
+        sendResponse({
+          success: false,
+          error: err.message || 'Failed to search Pinterest page'
+        });
+      });
+
+    return true;
+  }
+
+  // Single-page User Pins Pagination
+  if (message.type === 'FETCH_USER_PINS_PAGE' && message.username) {
+    fetchUserPinsSinglePage(message.username, message.bookmark || null)
+      .then((result) => {
+        sendResponse({
+          success: true,
+          data: result
+        });
+      })
+      .catch((err) => {
+        sendResponse({
+          success: false,
+          error: err.message || 'Failed to fetch user pins page'
+        });
+      });
+
+    return true;
   }
 
   if (message.type === 'FETCH_ALL_USER_PINS' && message.username) {
@@ -71,6 +109,146 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
+
+/**
+ * Fetches a single page of search results for continuous batch streaming
+ */
+async function fetchSearchSinglePage(query, bookmark = null) {
+  const searchUrl = `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}&rs=typed`;
+  const searchRes = await fetch(searchUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    }
+  });
+
+  const cookies = searchRes.headers.get('set-cookie') || '';
+  const csrfMatch = cookies.match(/csrftoken=([^;]+)/);
+  const csrf = csrfMatch ? csrfMatch[1] : '';
+
+  const headers = {
+    'X-Requested-With': 'XMLHttpRequest',
+    'X-CSRFToken': csrf,
+    'X-Pinterest-AppState': 'active',
+    'X-Pinterest-PWS-Handler': 'www/search/pins',
+    'Cookie': cookies,
+    'Accept': 'application/json, text/javascript, */*, q=0.01',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+  };
+
+  const options = {
+    query: query,
+    scope: 'pins',
+    field_set_key: 'grid_item'
+  };
+  if (bookmark && bookmark !== '-end-') {
+    options.bookmarks = [bookmark];
+  }
+
+  const data = JSON.stringify({ options, context: {} });
+  const resApi = await fetch('https://www.pinterest.com/resource/BaseSearchResource/get/?data=' + encodeURIComponent(data), { headers });
+  
+  if (!resApi.ok) {
+    throw new Error(`Search API HTTP ${resApi.status}`);
+  }
+
+  const apiJson = await resApi.json().catch(() => null);
+  const results = apiJson?.resource_response?.data?.results || apiJson?.resource_response?.data || [];
+  const nextBookmark = apiJson?.resource_response?.bookmark || null;
+  const isEnd = !nextBookmark || nextBookmark === '-end-';
+
+  const pins = [];
+  const seenUrls = new Set();
+
+  results.forEach(item => {
+    const orig = item.images?.orig?.url || item.images?.['736x']?.url || item.images?.['474x']?.url;
+    const fallback = item.images?.['736x']?.url || orig;
+    const title = (item.title || item.grid_title || item.description || `${query} Wallpaper`).trim();
+    const link = item.id ? `https://www.pinterest.com/pin/${item.id}/` : `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
+
+    if (orig && !seenUrls.has(orig)) {
+      seenUrls.add(orig);
+      pins.push({
+        title,
+        url: orig,
+        fallbackUrl: fallback,
+        link
+      });
+    }
+  });
+
+  return {
+    pins,
+    bookmark: nextBookmark,
+    end: isEnd
+  };
+}
+
+/**
+ * Fetches a single page of user saved pins for continuous batch streaming
+ */
+async function fetchUserPinsSinglePage(username, bookmark = null) {
+  const homeRes = await fetch(`https://www.pinterest.com/${encodeURIComponent(username)}/`);
+  const cookies = homeRes.headers.get('set-cookie') || '';
+  const csrfMatch = cookies.match(/csrftoken=([^;]+)/);
+  const csrf = csrfMatch ? csrfMatch[1] : '';
+
+  const headers = {
+    'X-Requested-With': 'XMLHttpRequest',
+    'X-CSRFToken': csrf,
+    'X-Pinterest-AppState': 'active',
+    'X-Pinterest-PWS-Handler': 'www/[username]',
+    'Cookie': cookies,
+    'Accept': 'application/json, text/javascript, */*, q=0.01',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+  };
+
+  const options = {
+    username: username,
+    field_set_key: 'grid_item'
+  };
+  if (bookmark && bookmark !== '-end-') {
+    options.bookmarks = [bookmark];
+  }
+
+  const data = JSON.stringify({ options, context: {} });
+  const resApi = await fetch('https://www.pinterest.com/resource/UserPinsResource/get/?data=' + encodeURIComponent(data), { headers });
+  
+  if (!resApi.ok) {
+    throw new Error(`UserPins API HTTP ${resApi.status}`);
+  }
+
+  const apiJson = await resApi.json().catch(() => null);
+  const results = apiJson?.resource_response?.data || [];
+  const nextBookmark = apiJson?.resource_response?.bookmark || null;
+  const isEnd = !nextBookmark || nextBookmark === '-end-';
+
+  const pins = [];
+  const seenUrls = new Set();
+
+  results.forEach(item => {
+    const orig = item.images?.orig?.url || item.images?.['736x']?.url || item.images?.['474x']?.url;
+    const fallback = item.images?.['736x']?.url || orig;
+    const title = (item.title || item.grid_title || item.description || `@${username} Pin`).trim();
+    const link = item.id ? `https://www.pinterest.com/pin/${item.id}/` : `https://www.pinterest.com/${username}/`;
+
+    if (orig && !seenUrls.has(orig)) {
+      seenUrls.add(orig);
+      pins.push({
+        title,
+        url: orig,
+        fallbackUrl: fallback,
+        link
+      });
+    }
+  });
+
+  return {
+    pins,
+    bookmark: nextBookmark,
+    end: isEnd
+  };
+}
 
 /**
  * Multi-page bookmark pagination for all user saved pins

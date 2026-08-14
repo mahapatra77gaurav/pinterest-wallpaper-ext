@@ -8,6 +8,23 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <!-- Instant Cold-Start First-Paint (0ms perceptual delay) -->
+  <script>
+    (function() {
+      try {
+        var raw = localStorage.getItem('last_active_wallpaper');
+        if (raw) {
+          var wp = JSON.parse(raw);
+          if (wp && wp.url) {
+            var style = document.createElement('style');
+            style.id = 'cold-start-style';
+            style.textContent = '#bg-1 { background-image: url("' + wp.url + '") !important; opacity: 1 !important; }';
+            document.head.appendChild(style);
+          }
+        }
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
   <!-- Dual Background Layers for Seamless Crossfade & Ambient Backdrop for Contain/Original modes -->

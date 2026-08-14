@@ -55,10 +55,13 @@ const FALLBACK_WALLPAPERS = [
 let appState = {
   config: { ...DEFAULT_CONFIG },
   userShortcuts: [],
-  wallpaperQueue: [], // Lightweight queue of wallpaper metadata
-  wallpapers: [],     // Active rotation
+  wallpaperQueue: [],       // Lightweight queue of wallpaper metadata
+  wallpapers: [],           // Active streaming rotation array
+  seenUrls: new Set(),      // De-duplication set for continuous batching
+  paginationBookmark: null, // Cursor bookmark for Pinterest pagination
+  isFetchingNextBatch: false,
   currentIndex: 0,
-  activeLayer: 1,     // 1 for #bg-1, 2 for #bg-2
+  activeLayer: 1,           // 1 for #bg-1, 2 for #bg-2
   cycleTimer: null,
   preloadTimer: null,
   preloadedCache: new Map(), // In-memory image objects cache (current + next only)
@@ -139,6 +142,93 @@ const elements = {
   inputShortcutTitle: document.getElementById('input-shortcut-title'),
   inputShortcutUrl: document.getElementById('input-shortcut-url')
 };
+
+// =============================================================================
+// Instant First-Paint (Cold-Start Cache Engine)
+// =============================================================================
+
+/**
+ * Synchronously renders the last active wallpaper from local cache for 0ms cold-start
+ */
+function applyColdStartWallpaper() {
+  try {
+    const raw = localStorage.getItem('last_active_wallpaper');
+    if (raw) {
+      const cached = JSON.parse(raw);
+      if (cached && cached.url) {
+        if (elements.bg1) {
+          elements.bg1.style.backgroundImage = `url("${cached.url}")`;
+          elements.bg1.classList.add('active');
+          setLayerRotation(elements.bg1, cached.rotation || 0);
+        }
+        if (elements.bgAmbient) {
+          elements.bgAmbient.style.backgroundImage = `url("${cached.url}")`;
+          setLayerRotation(elements.bgAmbient, cached.rotation || 0);
+        }
+        if (elements.pinTitle && cached.title) elements.pinTitle.textContent = cached.title;
+        if (elements.pinLink && cached.link) {
+          elements.pinLink.href = cached.link;
+          elements.pinLink.title = `View Source: ${cached.title}`;
+        }
+      }
+    }
+  } catch (e) {}
+
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(['last_active_wallpaper'], (res) => {
+      if (res && res.last_active_wallpaper) {
+        const cached = res.last_active_wallpaper;
+        try {
+          localStorage.setItem('last_active_wallpaper', JSON.stringify(cached));
+        } catch (e) {}
+        if (elements.bg1 && !elements.bg1.style.backgroundImage) {
+          elements.bg1.style.backgroundImage = `url("${cached.url}")`;
+          elements.bg1.classList.add('active');
+          setLayerRotation(elements.bg1, cached.rotation || 0);
+        }
+        if (elements.bgAmbient && !elements.bgAmbient.style.backgroundImage) {
+          elements.bgAmbient.style.backgroundImage = `url("${cached.url}")`;
+          setLayerRotation(elements.bgAmbient, cached.rotation || 0);
+        }
+      }
+    });
+  }
+}
+
+/**
+ * Saves current active wallpaper metadata to cold-start storage
+ */
+function saveActiveWallpaperToColdStart(wallpaper) {
+  if (!wallpaper || !wallpaper.url) return;
+  const payload = {
+    title: wallpaper.title || 'Wallpaper',
+    url: wallpaper.url,
+    fallbackUrl: wallpaper.fallbackUrl || wallpaper.url,
+    link: wallpaper.link || '#',
+    rotation: wallpaper.rotation || 0
+  };
+
+  try {
+    localStorage.setItem('last_active_wallpaper', JSON.stringify(payload));
+  } catch (e) {}
+
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.set({ last_active_wallpaper: payload });
+  }
+}
+
+/**
+ * Saves active wallpaper queue snapshot to storage for fast session restoration
+ */
+function saveQueueToStorage() {
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    const queueSlice = appState.wallpapers.slice(appState.currentIndex, appState.currentIndex + 25);
+    chrome.storage.local.set({
+      cached_wallpaper_queue: queueSlice,
+      pagination_bookmark: appState.paginationBookmark
+    });
+  }
+}
 
 // =============================================================================
 // Storage Layer (chrome.storage.local with LocalStorage fallback)
@@ -847,7 +937,7 @@ async function fetchPinterestSearch(query) {
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
     try {
       const response = await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: 'FETCH_PINTEREST_SEARCH', query: cleanQuery, maxPages: 4 }, (res) => {
+        chrome.runtime.sendMessage({ type: 'FETCH_PINTEREST_SEARCH', query: cleanQuery, maxPages: 3 }, (res) => {
           if (chrome.runtime.lastError) {
             resolve({ success: false, error: chrome.runtime.lastError.message });
           } else {
@@ -875,6 +965,130 @@ async function fetchPinterestSearch(query) {
   } catch (e) {}
 
   throw new Error(`No wallpapers found for "${cleanQuery}". Try another keyword.`);
+}
+
+/**
+ * Fetches 1 page/batch of search pins using cursor bookmark for endless streaming
+ */
+async function fetchPinterestSearchBatch(query, bookmark = null) {
+  if (!query || !query.trim()) {
+    throw new Error('Please enter a search query.');
+  }
+
+  const cleanQuery = query.trim();
+
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    try {
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ 
+          type: 'FETCH_PINTEREST_SEARCH_PAGE', 
+          query: cleanQuery, 
+          bookmark: bookmark 
+        }, (res) => {
+          if (chrome.runtime.lastError) {
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(res || { success: false, error: 'No response from worker' });
+          }
+        });
+      });
+
+      if (response && response.success && response.data) {
+        return response.data; // { pins: [...], bookmark: '...', end: false }
+      }
+    } catch (e) {
+      console.warn('fetchPinterestSearchBatch error:', e);
+    }
+  }
+
+  // Fallback to full search
+  const fallbackPins = await fetchPinterestSearch(cleanQuery);
+  return { pins: fallbackPins, bookmark: null, end: true };
+}
+
+/**
+ * Fetches 1 page/batch of user saved pins using cursor bookmark
+ */
+async function fetchUserPinsBatch(username, bookmark = null) {
+  if (!username) return { pins: [], bookmark: null, end: true };
+
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    try {
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ 
+          type: 'FETCH_USER_PINS_PAGE', 
+          username: username, 
+          bookmark: bookmark 
+        }, (res) => {
+          if (chrome.runtime.lastError) {
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(res || { success: false, error: 'No response from worker' });
+          }
+        });
+      });
+
+      if (response && response.success && response.data) {
+        return response.data; // { pins: [...], bookmark: '...', end: false }
+      }
+    } catch (e) {
+      console.warn('fetchUserPinsBatch error:', e);
+    }
+  }
+
+  const fallbackPins = await fetchAllSavedPins(username);
+  return { pins: fallbackPins, bookmark: null, end: true };
+}
+
+/**
+ * Automatically triggers background fetch for the next page of pins
+ * when fewer than 6 unviewed images remain in the active queue
+ */
+async function fetchNextBatch() {
+  if (appState.isFetchingNextBatch || appState.isLoadingFeed) return;
+  const mode = appState.config.sourceMode;
+  if (!['pinterest-search', 'pinterest-both', 'pinterest-saved'].includes(mode)) return;
+
+  appState.isFetchingNextBatch = true;
+  try {
+    let result = null;
+    if (mode === 'pinterest-search') {
+      const query = appState.config.searchQuery || '4k dark cyberpunk wallpaper';
+      result = await fetchPinterestSearchBatch(query, appState.paginationBookmark);
+    } else if (mode === 'pinterest-saved' || mode === 'pinterest-both') {
+      const user = sanitizeHandle(appState.config.username) || 'pinterest';
+      result = await fetchUserPinsBatch(user, appState.paginationBookmark);
+    }
+
+    if (result && Array.isArray(result.pins) && result.pins.length > 0) {
+      let addedCount = 0;
+      result.pins.forEach(pin => {
+        if (!appState.seenUrls.has(pin.url)) {
+          appState.seenUrls.add(pin.url);
+          appState.wallpaperQueue.push(pin);
+          appState.wallpapers.push(pin);
+          addedCount++;
+        }
+      });
+
+      // Update bookmark cursor or reset if at end of stream to loop continuously
+      if (result.end || !result.bookmark || result.bookmark === '-end-') {
+        appState.paginationBookmark = null;
+      } else {
+        appState.paginationBookmark = result.bookmark;
+      }
+
+      // Save updated queue to chrome.storage.local
+      saveQueueToStorage();
+      updateActiveStatusLabel();
+    } else {
+      appState.paginationBookmark = null;
+    }
+  } catch (e) {
+    console.warn('fetchNextBatch background error:', e);
+  } finally {
+    appState.isFetchingNextBatch = false;
+  }
 }
 
 // =============================================================================
@@ -910,6 +1124,7 @@ function rotateActiveWallpaper() {
     setLayerRotation(elements.bgAmbient, nextRot);
   }
 
+  saveActiveWallpaperToColdStart(currentItem);
   showToast(`Rotated wallpaper to ${nextRot}°`);
 }
 
@@ -954,6 +1169,11 @@ function preloadImage(wallpaper) {
         wallpaper.rotation = wallpaper.manualRotation;
       }
 
+      // Decode immediately to ensure GPU rasterization is ready
+      if (img.decode) {
+        img.decode().catch(() => {});
+      }
+
       // Keep cache size bounded to maximum 4 active images to prevent RAM buildup
       if (appState.preloadedCache.size >= 4) {
         const oldestKey = appState.preloadedCache.keys().next().value;
@@ -974,6 +1194,7 @@ function preloadImage(wallpaper) {
           let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
           wallpaper.rotation = wallpaper.manualRotation !== undefined ? wallpaper.manualRotation : baseRotation;
 
+          if (fallbackImg.decode) fallbackImg.decode().catch(() => {});
           appState.preloadedCache.set(wallpaper.fallbackUrl, fallbackImg);
           resolve({ success: true, src: wallpaper.fallbackUrl, rotation: wallpaper.rotation });
         };
@@ -989,7 +1210,7 @@ function preloadImage(wallpaper) {
 }
 
 /**
- * Lazy loads the NEXT upcoming image into memory buffer
+ * Lazy loads and decodes the NEXT upcoming image into memory buffer 3-5 seconds ahead
  */
 function preloadNextImmediateImage() {
   if (appState.wallpapers.length <= 1) return;
@@ -1054,8 +1275,17 @@ async function displayWallpaper(index, manual = false) {
   elements.pinLink.href = currentItem.link || '#';
   elements.pinLink.title = `View Source: ${currentItem.title}`;
 
+  // Persist current wallpaper to cold-start cache immediately for 0ms next tab load
+  saveActiveWallpaperToColdStart(currentItem);
+
   // Update Settings Active Status with lazy count
   updateActiveStatusLabel();
+
+  // Threshold monitor: if fewer than 6 unviewed images remain in queue, fetch next page in background!
+  const unviewedRemaining = appState.wallpapers.length - (appState.currentIndex + 1);
+  if (unviewedRemaining <= 6) {
+    fetchNextBatch();
+  }
 
   // Lazy Preload NEXT image into memory for zero-flash transition
   preloadNextImmediateImage();
@@ -1108,8 +1338,8 @@ function startCycleTimer() {
 
   const intervalMs = Math.max(5, appState.config.interval || 30) * 1000;
   
-  // Preload next image 3 seconds before next cycle
-  const preloadAdvanceMs = Math.max(1000, intervalMs - 3000);
+  // Preload next image 3.5 seconds before next cycle
+  const preloadAdvanceMs = Math.max(1000, intervalMs - 3500);
   appState.preloadTimer = setTimeout(() => {
     preloadNextImmediateImage();
   }, preloadAdvanceMs);
@@ -1175,31 +1405,52 @@ async function loadWallpapersByMode(notify = false) {
     if (mode === 'pinterest-search') {
       const query = (appState.config.searchQuery || '4k dark cyberpunk wallpaper').trim();
       updateStatus('loading', `Searching Pinterest for "${query}"...`);
-      const pins = await fetchPinterestSearch(query);
+      
+      // Fetch initial batch with pagination cursor
+      const batch = await fetchPinterestSearchBatch(query, null);
+      const pins = batch.pins || [];
 
+      if (pins.length === 0) {
+        throw new Error(`No wallpapers found matching "${query}".`);
+      }
+
+      appState.seenUrls.clear();
+      pins.forEach(p => appState.seenUrls.add(p.url));
       appState.wallpaperQueue = [...pins];
-      appState.wallpapers = shuffleArray([...pins]);
+      appState.wallpapers = [...pins];
+      appState.paginationBookmark = batch.bookmark || null;
+
+      saveQueueToStorage();
       updateActiveStatusLabel();
-      if (notify) showToast(`Found ${pins.length} wallpapers for "${query}"`);
+      if (notify) showToast(`Streaming wallpapers for "${query}"`);
 
     } else if (mode === 'pinterest-both') {
       updateStatus('loading', `Aggregating all saved pins & feed for @${user}...`);
       const pins = await fetchBothPins(user);
       
+      appState.seenUrls.clear();
+      pins.forEach(p => appState.seenUrls.add(p.url));
       appState.wallpaperQueue = [...pins];
       appState.wallpapers = shuffleArray([...pins]);
+      saveQueueToStorage();
       updateActiveStatusLabel();
       if (notify) showToast(`Loaded ${pins.length} wallpapers from @${user}`);
 
     } else if (mode === 'pinterest-saved') {
       updateStatus('loading', `Fetching all saved pins & boards for @${user}...`);
-      const pins = await fetchAllSavedPins(user);
+      const batch = await fetchUserPinsBatch(user, null);
+      const pins = batch.pins || [];
       if (pins.length === 0) {
         throw new Error(`No saved pins found on profile for @${user}.`);
       }
 
+      appState.seenUrls.clear();
+      pins.forEach(p => appState.seenUrls.add(p.url));
       appState.wallpaperQueue = [...pins];
-      appState.wallpapers = shuffleArray([...pins]);
+      appState.wallpapers = [...pins];
+      appState.paginationBookmark = batch.bookmark || null;
+
+      saveQueueToStorage();
       updateActiveStatusLabel();
       if (notify) showToast(`Loaded ${pins.length} saved pins from @${user}`);
 
@@ -1210,8 +1461,11 @@ async function loadWallpapersByMode(notify = false) {
         throw new Error(`No pins found in RSS feed for @${user}.`);
       }
 
+      appState.seenUrls.clear();
+      pins.forEach(p => appState.seenUrls.add(p.url));
       appState.wallpaperQueue = [...pins];
       appState.wallpapers = shuffleArray([...pins]);
+      saveQueueToStorage();
       updateActiveStatusLabel();
       if (notify) showToast(`Loaded ${pins.length} wallpapers from @${user} Feed`);
 
@@ -1220,8 +1474,11 @@ async function loadWallpapersByMode(notify = false) {
       updateStatus('loading', `Fetching board(s) "${board}" for @${user}...`);
       const pins = await fetchBoardPins(user, board);
 
+      appState.seenUrls.clear();
+      pins.forEach(p => appState.seenUrls.add(p.url));
       appState.wallpaperQueue = [...pins];
       appState.wallpapers = shuffleArray([...pins]);
+      saveQueueToStorage();
       updateActiveStatusLabel();
       if (notify) showToast(`Loaded ${pins.length} wallpapers from board(s)`);
 
@@ -1659,6 +1916,10 @@ function setupEventListeners() {
 // =============================================================================
 
 async function initApp() {
+  // 1. Instant First-Paint: Apply last active wallpaper synchronously from cold-start cache
+  applyColdStartWallpaper();
+
+  // 2. Load persistent config & user shortcuts
   appState.config = await loadConfig();
   appState.userShortcuts = await loadUserShortcuts();
 
@@ -1667,9 +1928,32 @@ async function initApp() {
   renderShortcuts();
   setupEventListeners();
 
-  // Load active wallpaper stream & cycle
-  loadWallpapersByMode(false);
+  // 3. Restore cached queue from previous session so initial clicks work instantly
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(['cached_wallpaper_queue', 'pagination_bookmark'], (res) => {
+      if (res && Array.isArray(res.cached_wallpaper_queue) && res.cached_wallpaper_queue.length > 0) {
+        res.cached_wallpaper_queue.forEach(p => {
+          if (!appState.seenUrls.has(p.url)) {
+            appState.seenUrls.add(p.url);
+            appState.wallpaperQueue.push(p);
+            appState.wallpapers.push(p);
+          }
+        });
+        if (res.pagination_bookmark) {
+          appState.paginationBookmark = res.pagination_bookmark;
+        }
+      }
+      
+      // 4. Stream wallpapers in background & initialize live cycle
+      loadWallpapersByMode(false);
+    });
+  } else {
+    loadWallpapersByMode(false);
+  }
 }
+
+// Immediately attempt cold-start on script execution before DOMContentLoaded
+applyColdStartWallpaper();
 
 // Start on DOM Ready
 document.addEventListener('DOMContentLoaded', initApp);
