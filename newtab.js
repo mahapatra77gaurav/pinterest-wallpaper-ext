@@ -58,6 +58,7 @@ let appState = {
   wallpaperQueue: [],       // Lightweight queue of wallpaper metadata
   wallpapers: [],           // Active streaming rotation array
   seenUrls: new Set(),      // De-duplication set for continuous batching
+  rotations: {},            // Persistent image URL -> degrees rotation mapping
   paginationBookmark: null, // Cursor bookmark for Pinterest pagination
   isFetchingNextBatch: false,
   currentIndex: 0,
@@ -153,17 +154,27 @@ const elements = {
 function applyColdStartWallpaper() {
   try {
     const raw = localStorage.getItem('last_active_wallpaper');
+    const rotRaw = localStorage.getItem('wallpaper_rotations');
+    const rotations = rotRaw ? JSON.parse(rotRaw) : {};
+    if (rotations) {
+      appState.rotations = { ...appState.rotations, ...rotations };
+    }
+
     if (raw) {
       const cached = JSON.parse(raw);
       if (cached && cached.url) {
+        const savedRot = (appState.rotations && appState.rotations[cached.url] !== undefined)
+          ? appState.rotations[cached.url]
+          : (cached.rotation || 0);
+
         if (elements.bg1) {
           elements.bg1.style.backgroundImage = `url("${cached.url}")`;
           elements.bg1.classList.add('active');
-          setLayerRotation(elements.bg1, cached.rotation || 0);
+          setLayerRotation(elements.bg1, savedRot);
         }
         if (elements.bgAmbient) {
           elements.bgAmbient.style.backgroundImage = `url("${cached.url}")`;
-          setLayerRotation(elements.bgAmbient, cached.rotation || 0);
+          setLayerRotation(elements.bgAmbient, savedRot);
         }
         if (elements.pinTitle && cached.title) elements.pinTitle.textContent = cached.title;
         if (elements.pinLink && cached.link) {
@@ -175,20 +186,28 @@ function applyColdStartWallpaper() {
   } catch (e) {}
 
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['last_active_wallpaper'], (res) => {
+    chrome.storage.local.get(['last_active_wallpaper', 'wallpaper_rotations'], (res) => {
+      if (res && res.wallpaper_rotations) {
+        appState.rotations = { ...appState.rotations, ...res.wallpaper_rotations };
+      }
       if (res && res.last_active_wallpaper) {
         const cached = res.last_active_wallpaper;
         try {
           localStorage.setItem('last_active_wallpaper', JSON.stringify(cached));
         } catch (e) {}
+
+        const savedRot = (appState.rotations && appState.rotations[cached.url] !== undefined)
+          ? appState.rotations[cached.url]
+          : (cached.rotation || 0);
+
         if (elements.bg1 && !elements.bg1.style.backgroundImage) {
           elements.bg1.style.backgroundImage = `url("${cached.url}")`;
           elements.bg1.classList.add('active');
-          setLayerRotation(elements.bg1, cached.rotation || 0);
+          setLayerRotation(elements.bg1, savedRot);
         }
         if (elements.bgAmbient && !elements.bgAmbient.style.backgroundImage) {
           elements.bgAmbient.style.backgroundImage = `url("${cached.url}")`;
-          setLayerRotation(elements.bgAmbient, cached.rotation || 0);
+          setLayerRotation(elements.bgAmbient, savedRot);
         }
       }
     });
@@ -200,12 +219,16 @@ function applyColdStartWallpaper() {
  */
 function saveActiveWallpaperToColdStart(wallpaper) {
   if (!wallpaper || !wallpaper.url) return;
+  const rotation = (appState.rotations && appState.rotations[wallpaper.url] !== undefined)
+    ? appState.rotations[wallpaper.url]
+    : (wallpaper.rotation || 0);
+
   const payload = {
     title: wallpaper.title || 'Wallpaper',
     url: wallpaper.url,
     fallbackUrl: wallpaper.fallbackUrl || wallpaper.url,
     link: wallpaper.link || '#',
-    rotation: wallpaper.rotation || 0
+    rotation: rotation
   };
 
   try {
@@ -214,6 +237,40 @@ function saveActiveWallpaperToColdStart(wallpaper) {
 
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
     chrome.storage.local.set({ last_active_wallpaper: payload });
+  }
+}
+
+/**
+ * Persists orientation angle mapped to a specific image URL
+ */
+function saveRotationForUrl(url, degrees) {
+  if (!url) return;
+  appState.rotations[url] = degrees;
+  try {
+    localStorage.setItem('wallpaper_rotations', JSON.stringify(appState.rotations));
+  } catch (e) {}
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.set({ wallpaper_rotations: appState.rotations });
+  }
+}
+
+/**
+ * Loads persistent rotation mappings from storage
+ */
+function loadRotations() {
+  try {
+    const raw = localStorage.getItem('wallpaper_rotations');
+    if (raw) {
+      appState.rotations = { ...appState.rotations, ...(JSON.parse(raw) || {}) };
+    }
+  } catch (e) {}
+
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(['wallpaper_rotations'], (res) => {
+      if (res && res.wallpaper_rotations) {
+        appState.rotations = { ...appState.rotations, ...res.wallpaper_rotations };
+      }
+    });
   }
 }
 
@@ -1118,6 +1175,12 @@ function rotateActiveWallpaper() {
   currentItem.manualRotation = nextRot;
   currentItem.rotation = nextRot;
 
+  // Persist rotation mapped to this specific image URL
+  saveRotationForUrl(currentItem.url, nextRot);
+  if (currentItem.fallbackUrl) {
+    saveRotationForUrl(currentItem.fallbackUrl, nextRot);
+  }
+
   const activeLayerEl = appState.activeLayer === 1 ? elements.bg1 : elements.bg2;
   setLayerRotation(activeLayerEl, nextRot);
   if (elements.bgAmbient) {
@@ -1136,16 +1199,25 @@ function preloadImage(wallpaper) {
     return Promise.resolve({ success: false });
   }
 
+  // Priority 1: Check persistent rotation mapping for this specific URL
+  const savedRot = appState.rotations[wallpaper.url] !== undefined 
+    ? appState.rotations[wallpaper.url] 
+    : (wallpaper.fallbackUrl ? appState.rotations[wallpaper.fallbackUrl] : undefined);
+
   if (appState.preloadedCache.has(wallpaper.url)) {
     const cachedImg = appState.preloadedCache.get(wallpaper.url);
     const width = cachedImg.naturalWidth || cachedImg.width || 1920;
     const height = cachedImg.naturalHeight || cachedImg.height || 1080;
     const isPortrait = height > width;
-    let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
-    if (wallpaper.manualRotation === undefined) {
-      wallpaper.rotation = baseRotation;
-    } else {
+
+    if (savedRot !== undefined) {
+      wallpaper.manualRotation = savedRot;
+      wallpaper.rotation = savedRot;
+    } else if (wallpaper.manualRotation !== undefined) {
       wallpaper.rotation = wallpaper.manualRotation;
+    } else {
+      let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
+      wallpaper.rotation = baseRotation;
     }
     return Promise.resolve({ success: true, src: wallpaper.url, rotation: wallpaper.rotation });
   }
@@ -1158,15 +1230,19 @@ function preloadImage(wallpaper) {
       const width = img.naturalWidth || img.width;
       const height = img.naturalHeight || img.height;
       const isPortrait = height > width;
-      let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
 
       wallpaper.naturalWidth = width;
       wallpaper.naturalHeight = height;
       wallpaper.isPortrait = isPortrait;
-      if (wallpaper.manualRotation === undefined) {
-        wallpaper.rotation = baseRotation;
-      } else {
+
+      if (savedRot !== undefined) {
+        wallpaper.manualRotation = savedRot;
+        wallpaper.rotation = savedRot;
+      } else if (wallpaper.manualRotation !== undefined) {
         wallpaper.rotation = wallpaper.manualRotation;
+      } else {
+        let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
+        wallpaper.rotation = baseRotation;
       }
 
       // Decode immediately to ensure GPU rasterization is ready
@@ -1191,8 +1267,16 @@ function preloadImage(wallpaper) {
           const width = fallbackImg.naturalWidth || fallbackImg.width;
           const height = fallbackImg.naturalHeight || fallbackImg.height;
           const isPortrait = height > width;
-          let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
-          wallpaper.rotation = wallpaper.manualRotation !== undefined ? wallpaper.manualRotation : baseRotation;
+
+          if (savedRot !== undefined) {
+            wallpaper.manualRotation = savedRot;
+            wallpaper.rotation = savedRot;
+          } else if (wallpaper.manualRotation !== undefined) {
+            wallpaper.rotation = wallpaper.manualRotation;
+          } else {
+            let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
+            wallpaper.rotation = baseRotation;
+          }
 
           if (fallbackImg.decode) fallbackImg.decode().catch(() => {});
           appState.preloadedCache.set(wallpaper.fallbackUrl, fallbackImg);
@@ -1254,8 +1338,13 @@ async function displayWallpaper(index, manual = false) {
   const activeLayerEl = appState.activeLayer === 1 ? elements.bg1 : elements.bg2;
   const nextLayerEl = nextLayerNum === 1 ? elements.bg1 : elements.bg2;
 
-  // Apply orientation rotation BEFORE crossfading into view (zero-flicker guarantee)
-  const rotation = currentItem.rotation || 0;
+  // Check persistent rotation map
+  const rotation = (appState.rotations && appState.rotations[currentItem.url] !== undefined)
+    ? appState.rotations[currentItem.url]
+    : (currentItem.rotation || 0);
+  currentItem.rotation = rotation;
+
+  // 1. Prepare inactive layer instantaneously while hidden (opacity 0)
   setLayerRotation(nextLayerEl, rotation);
   if (elements.bgAmbient) {
     setLayerRotation(elements.bgAmbient, rotation);
@@ -1266,6 +1355,10 @@ async function displayWallpaper(index, manual = false) {
     elements.bgAmbient.style.backgroundImage = `url("${imageSrc}")`;
   }
 
+  // Force reflow/style flush so rotation and dimensions are applied instantaneously before opacity crossfade
+  void nextLayerEl.offsetHeight;
+
+  // 2. Trigger pure opacity crossfade (0 -> 1 and 1 -> 0)
   nextLayerEl.classList.add('active');
   activeLayerEl.classList.remove('active');
 
@@ -1275,7 +1368,7 @@ async function displayWallpaper(index, manual = false) {
   elements.pinLink.href = currentItem.link || '#';
   elements.pinLink.title = `View Source: ${currentItem.title}`;
 
-  // Persist current wallpaper to cold-start cache immediately for 0ms next tab load
+  // Persist current wallpaper with rotation to cold-start cache immediately for 0ms next tab load
   saveActiveWallpaperToColdStart(currentItem);
 
   // Update Settings Active Status with lazy count
@@ -1417,7 +1510,7 @@ async function loadWallpapersByMode(notify = false) {
       appState.seenUrls.clear();
       pins.forEach(p => appState.seenUrls.add(p.url));
       appState.wallpaperQueue = [...pins];
-      appState.wallpapers = [...pins];
+      appState.wallpapers = shuffleArray([...pins]);
       appState.paginationBookmark = batch.bookmark || null;
 
       saveQueueToStorage();
@@ -1447,7 +1540,7 @@ async function loadWallpapersByMode(notify = false) {
       appState.seenUrls.clear();
       pins.forEach(p => appState.seenUrls.add(p.url));
       appState.wallpaperQueue = [...pins];
-      appState.wallpapers = [...pins];
+      appState.wallpapers = shuffleArray([...pins]);
       appState.paginationBookmark = batch.bookmark || null;
 
       saveQueueToStorage();
@@ -1513,8 +1606,10 @@ async function loadWallpapersByMode(notify = false) {
       if (notify) showToast('Local image wallpaper applied');
     }
 
-    appState.currentIndex = 0;
-    await displayWallpaper(0);
+    // Pick a random starting wallpaper so every new tab starts non-deterministically
+    const randomIndex = Math.floor(Math.random() * appState.wallpapers.length);
+    appState.currentIndex = randomIndex;
+    await displayWallpaper(randomIndex);
     startCycleTimer();
 
   } catch (err) {
@@ -1526,9 +1621,10 @@ async function loadWallpapersByMode(notify = false) {
     }
 
     appState.wallpaperQueue = [...FALLBACK_WALLPAPERS];
-    appState.wallpapers = [...FALLBACK_WALLPAPERS];
-    appState.currentIndex = 0;
-    await displayWallpaper(0);
+    appState.wallpapers = shuffleArray([...FALLBACK_WALLPAPERS]);
+    const randomIndex = Math.floor(Math.random() * appState.wallpapers.length);
+    appState.currentIndex = randomIndex;
+    await displayWallpaper(randomIndex);
     startCycleTimer();
   } finally {
     appState.isLoadingFeed = false;
@@ -1916,7 +2012,8 @@ function setupEventListeners() {
 // =============================================================================
 
 async function initApp() {
-  // 1. Instant First-Paint: Apply last active wallpaper synchronously from cold-start cache
+  // 1. Instant First-Paint: Load rotations and apply last active wallpaper synchronously from cold-start cache
+  loadRotations();
   applyColdStartWallpaper();
 
   // 2. Load persistent config & user shortcuts
@@ -1930,9 +2027,13 @@ async function initApp() {
 
   // 3. Restore cached queue from previous session so initial clicks work instantly
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['cached_wallpaper_queue', 'pagination_bookmark'], (res) => {
+    chrome.storage.local.get(['cached_wallpaper_queue', 'pagination_bookmark', 'wallpaper_rotations'], (res) => {
+      if (res && res.wallpaper_rotations) {
+        appState.rotations = { ...appState.rotations, ...res.wallpaper_rotations };
+      }
       if (res && Array.isArray(res.cached_wallpaper_queue) && res.cached_wallpaper_queue.length > 0) {
-        res.cached_wallpaper_queue.forEach(p => {
+        const shuffledCached = shuffleArray([...res.cached_wallpaper_queue]);
+        shuffledCached.forEach(p => {
           if (!appState.seenUrls.has(p.url)) {
             appState.seenUrls.add(p.url);
             appState.wallpaperQueue.push(p);
@@ -1953,6 +2054,7 @@ async function initApp() {
 }
 
 // Immediately attempt cold-start on script execution before DOMContentLoaded
+loadRotations();
 applyColdStartWallpaper();
 
 // Start on DOM Ready

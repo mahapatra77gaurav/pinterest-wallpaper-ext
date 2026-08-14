@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <!-- Instant Cold-Start First-Paint (0ms perceptual delay) -->
+  <!-- Instant Cold-Start First-Paint (0ms perceptual delay with saved rotation) -->
   <script>
     (function() {
       try {
@@ -16,9 +16,16 @@
         if (raw) {
           var wp = JSON.parse(raw);
           if (wp && wp.url) {
+            var rotationsRaw = localStorage.getItem('wallpaper_rotations');
+            var rotations = rotationsRaw ? JSON.parse(rotationsRaw) : {};
+            var rot = (rotations && rotations[wp.url] !== undefined) ? rotations[wp.url] : (wp.rotation || 0);
+            var isSwapped = (rot === 90 || rot === 270);
+            var w = isSwapped ? '100vh' : '100vw';
+            var h = isSwapped ? '100vw' : '100vh';
+            
             var style = document.createElement('style');
             style.id = 'cold-start-style';
-            style.textContent = '#bg-1 { background-image: url("' + wp.url + '") !important; opacity: 1 !important; }';
+            style.textContent = '#bg-1 { background-image: url("' + wp.url + '") !important; opacity: 1 !important; width: ' + w + ' !important; height: ' + h + ' !important; transform: translate(-50%, -50%) rotate(' + rot + 'deg) !important; }';
             document.head.appendChild(style);
           }
         }

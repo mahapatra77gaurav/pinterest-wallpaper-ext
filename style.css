@@ -82,8 +82,14 @@ html, body {
   opacity: 0;
   z-index: 0;
   pointer-events: none;
-  transition: opacity 1.2s var(--transition-crossfade), background-image 1.2s ease, transform 0.4s var(--transition-smooth);
-  will-change: opacity, transform;
+  transition: opacity 1.2s var(--transition-crossfade);
+  will-change: opacity;
+}
+
+.bg-ambient-layer.rotate-0 {
+  width: calc(100vw + 60px);
+  height: calc(100vh + 60px);
+  transform: translate(-50%, -50%) rotate(0deg) scale(1.1);
 }
 
 .bg-ambient-layer.rotate-90 {
@@ -119,12 +125,12 @@ body.fit-auto .bg-ambient-layer {
   background-position: center center !important;
   background-repeat: no-repeat !important;
   filter: blur(var(--bg-blur-amount));
-  transform: translate(-50%, -50%) scale(1.04);
+  transform: translate(-50%, -50%);
   opacity: 0;
   z-index: 1;
   pointer-events: none;
-  transition: opacity 1.2s var(--transition-crossfade), transform 0.4s var(--transition-smooth);
-  will-change: opacity, transform;
+  transition: opacity 1.2s var(--transition-crossfade);
+  will-change: opacity;
 }
 
 body.fit-cover .bg-layer {
@@ -139,58 +145,34 @@ body.fit-auto .bg-layer {
   background-size: auto !important;
 }
 
-/* Orientation Rotation Support (Full-bleed 16:9 coverage) */
+/* Orientation Rotation Support (Full-bleed 16:9 coverage, strictly transform without animated rotation) */
 .bg-layer.rotate-0 {
   width: 100vw;
   height: 100vh;
-  transform: translate(-50%, -50%) rotate(0deg) scale(1.02);
+  transform: translate(-50%, -50%) rotate(0deg);
 }
 
 .bg-layer.rotate-90 {
   width: 100vh;
   height: 100vw;
-  transform: translate(-50%, -50%) rotate(90deg) scale(1.02);
+  transform: translate(-50%, -50%) rotate(90deg);
 }
 
 .bg-layer.rotate-180 {
   width: 100vw;
   height: 100vh;
-  transform: translate(-50%, -50%) rotate(180deg) scale(1.02);
+  transform: translate(-50%, -50%) rotate(180deg);
 }
 
 .bg-layer.rotate-270 {
   width: 100vh;
   height: 100vw;
-  transform: translate(-50%, -50%) rotate(270deg) scale(1.02);
+  transform: translate(-50%, -50%) rotate(270deg);
 }
 
 .bg-layer.active {
   opacity: 1;
   z-index: 2;
-}
-
-.bg-layer.active.rotate-0 {
-  width: 100vw;
-  height: 100vh;
-  transform: translate(-50%, -50%) rotate(0deg) scale(1);
-}
-
-.bg-layer.active.rotate-90 {
-  width: 100vh;
-  height: 100vw;
-  transform: translate(-50%, -50%) rotate(90deg) scale(1);
-}
-
-.bg-layer.active.rotate-180 {
-  width: 100vw;
-  height: 100vh;
-  transform: translate(-50%, -50%) rotate(180deg) scale(1);
-}
-
-.bg-layer.active.rotate-270 {
-  width: 100vh;
-  height: 100vw;
-  transform: translate(-50%, -50%) rotate(270deg) scale(1);
 }
 
 /* Initial fallback gradients to prevent white flash before images load */
