@@ -18,6 +18,7 @@ const DEFAULT_CONFIG = {
   interval: 30, // seconds
   timeFormat: '12h',
   fitMode: 'cover', // 'cover' | 'contain' | 'auto'
+  autoRotate: true, // Auto-Rotate portrait to landscape (enabled by default)
   dim: 25, // percentage
   blur: 0 // pixels
 };
@@ -82,6 +83,7 @@ const elements = {
   pinTitle: document.getElementById('pin-title'),
   prevBtn: document.getElementById('prev-btn'),
   nextBtn: document.getElementById('next-btn'),
+  rotateBtn: document.getElementById('rotate-btn'),
   pauseBtn: document.getElementById('pause-btn'),
   pauseIcon: document.getElementById('pause-icon'),
   playIcon: document.getElementById('play-icon'),
@@ -95,6 +97,7 @@ const elements = {
   // Settings Form Inputs
   selectSourceMode: document.getElementById('select-source-mode'),
   selectFitMode: document.getElementById('select-fit-mode'),
+  inputAutoRotate: document.getElementById('input-auto-rotate'),
   groupPinterestSearch: document.getElementById('group-pinterest-search'),
   inputSearchQuery: document.getElementById('input-search-query'),
   groupPresets: document.getElementById('group-presets'),
@@ -879,7 +882,39 @@ async function fetchPinterestSearch(query) {
 // =============================================================================
 
 /**
- * Preloads a single image and stores it in memory-efficient cache
+ * Applies full-bleed orientation rotation classes to layer elements
+ */
+function setLayerRotation(el, rotation) {
+  if (!el) return;
+  el.classList.remove('rotate-0', 'rotate-90', 'rotate-180', 'rotate-270');
+  const safeRot = [0, 90, 180, 270].includes(rotation) ? rotation : 0;
+  el.classList.add(`rotate-${safeRot}`);
+}
+
+/**
+ * Manually rotates the currently active wallpaper clockwise by 90°
+ */
+function rotateActiveWallpaper() {
+  if (appState.wallpapers.length === 0) return;
+  const currentItem = appState.wallpapers[appState.currentIndex];
+  if (!currentItem) return;
+
+  const currentRot = currentItem.rotation || 0;
+  const nextRot = (currentRot + 90) % 360;
+  currentItem.manualRotation = nextRot;
+  currentItem.rotation = nextRot;
+
+  const activeLayerEl = appState.activeLayer === 1 ? elements.bg1 : elements.bg2;
+  setLayerRotation(activeLayerEl, nextRot);
+  if (elements.bgAmbient) {
+    setLayerRotation(elements.bgAmbient, nextRot);
+  }
+
+  showToast(`Rotated wallpaper to ${nextRot}°`);
+}
+
+/**
+ * Preloads a single image and inspects natural dimensions for portrait auto-rotation
  */
 function preloadImage(wallpaper) {
   if (!wallpaper || !wallpaper.url) {
@@ -887,20 +922,45 @@ function preloadImage(wallpaper) {
   }
 
   if (appState.preloadedCache.has(wallpaper.url)) {
-    return Promise.resolve({ success: true, src: wallpaper.url });
+    const cachedImg = appState.preloadedCache.get(wallpaper.url);
+    const width = cachedImg.naturalWidth || cachedImg.width || 1920;
+    const height = cachedImg.naturalHeight || cachedImg.height || 1080;
+    const isPortrait = height > width;
+    let baseRotation = (appState.config.autoRotate && isPortrait) ? 90 : 0;
+    if (wallpaper.manualRotation === undefined) {
+      wallpaper.rotation = baseRotation;
+    } else {
+      wallpaper.rotation = wallpaper.manualRotation;
+    }
+    return Promise.resolve({ success: true, src: wallpaper.url, rotation: wallpaper.rotation });
   }
 
   return new Promise((resolve) => {
     const img = new Image();
     
     img.onload = () => {
-      // Keep cache size bounded to maximum 3 active images to prevent RAM buildup
+      // Natural dimension inspection for automatic portrait-to-landscape reorientation
+      const width = img.naturalWidth || img.width;
+      const height = img.naturalHeight || img.height;
+      const isPortrait = height > width;
+      let baseRotation = (appState.config.autoRotate && isPortrait) ? 90 : 0;
+
+      wallpaper.naturalWidth = width;
+      wallpaper.naturalHeight = height;
+      wallpaper.isPortrait = isPortrait;
+      if (wallpaper.manualRotation === undefined) {
+        wallpaper.rotation = baseRotation;
+      } else {
+        wallpaper.rotation = wallpaper.manualRotation;
+      }
+
+      // Keep cache size bounded to maximum 4 active images to prevent RAM buildup
       if (appState.preloadedCache.size >= 4) {
         const oldestKey = appState.preloadedCache.keys().next().value;
         appState.preloadedCache.delete(oldestKey);
       }
       appState.preloadedCache.set(wallpaper.url, img);
-      resolve({ success: true, src: wallpaper.url });
+      resolve({ success: true, src: wallpaper.url, rotation: wallpaper.rotation });
     };
 
     img.onerror = () => {
@@ -908,8 +968,14 @@ function preloadImage(wallpaper) {
       if (wallpaper.fallbackUrl && wallpaper.fallbackUrl !== wallpaper.url) {
         const fallbackImg = new Image();
         fallbackImg.onload = () => {
+          const width = fallbackImg.naturalWidth || fallbackImg.width;
+          const height = fallbackImg.naturalHeight || fallbackImg.height;
+          const isPortrait = height > width;
+          let baseRotation = (appState.config.autoRotate && isPortrait) ? 90 : 0;
+          wallpaper.rotation = wallpaper.manualRotation !== undefined ? wallpaper.manualRotation : baseRotation;
+
           appState.preloadedCache.set(wallpaper.fallbackUrl, fallbackImg);
-          resolve({ success: true, src: wallpaper.fallbackUrl });
+          resolve({ success: true, src: wallpaper.fallbackUrl, rotation: wallpaper.rotation });
         };
         fallbackImg.onerror = () => resolve({ success: false });
         fallbackImg.src = wallpaper.fallbackUrl;
@@ -966,6 +1032,13 @@ async function displayWallpaper(index, manual = false) {
   const nextLayerNum = appState.activeLayer === 1 ? 2 : 1;
   const activeLayerEl = appState.activeLayer === 1 ? elements.bg1 : elements.bg2;
   const nextLayerEl = nextLayerNum === 1 ? elements.bg1 : elements.bg2;
+
+  // Apply orientation rotation BEFORE crossfading into view (zero-flicker guarantee)
+  const rotation = currentItem.rotation || 0;
+  setLayerRotation(nextLayerEl, rotation);
+  if (elements.bgAmbient) {
+    setLayerRotation(elements.bgAmbient, rotation);
+  }
 
   nextLayerEl.style.backgroundImage = `url("${imageSrc}")`;
   if (elements.bgAmbient) {
@@ -1274,6 +1347,10 @@ function openSettingsModal() {
     elements.selectFitMode.value = appState.config.fitMode || 'cover';
   }
 
+  if (elements.inputAutoRotate) {
+    elements.inputAutoRotate.checked = appState.config.autoRotate ?? true;
+  }
+
   if (elements.inputSearchQuery) {
     elements.inputSearchQuery.value = appState.config.searchQuery || '4k dark cyberpunk wallpaper';
   }
@@ -1356,6 +1433,11 @@ function setupEventListeners() {
   elements.prevBtn.addEventListener('click', () => prevWallpaper(true));
   elements.nextBtn.addEventListener('click', () => nextWallpaper(true));
   elements.pauseBtn.addEventListener('click', togglePause);
+
+  // Manual Orientation Rotate Button
+  if (elements.rotateBtn) {
+    elements.rotateBtn.addEventListener('click', rotateActiveWallpaper);
+  }
 
   // Settings Modal Open/Close
   elements.settingsBtn.addEventListener('click', openSettingsModal);
@@ -1473,6 +1555,7 @@ function setupEventListeners() {
     const newBoard = sanitizeBoard(elements.inputBoard.value) || 'wallpapers';
     const newDirectUrl = elements.inputDirectUrl.value.trim();
     const newFitMode = elements.selectFitMode?.value || 'cover';
+    const newAutoRotate = elements.inputAutoRotate ? elements.inputAutoRotate.checked : true;
     const newInterval = Math.max(5, parseInt(elements.inputInterval.value, 10) || 30);
     const newTimeFormat = elements.inputTimeFormat.value || '12h';
     const newDim = parseInt(elements.inputDim.value, 10) || 25;
@@ -1485,6 +1568,7 @@ function setupEventListeners() {
       board: newBoard,
       directUrl: newDirectUrl,
       fitMode: newFitMode,
+      autoRotate: newAutoRotate,
       interval: newInterval,
       timeFormat: newTimeFormat,
       dim: newDim,
@@ -1515,6 +1599,10 @@ function setupEventListeners() {
       elements.selectFitMode.value = DEFAULT_CONFIG.fitMode;
     }
 
+    if (elements.inputAutoRotate) {
+      elements.inputAutoRotate.checked = DEFAULT_CONFIG.autoRotate;
+    }
+
     if (elements.inputSearchQuery) {
       elements.inputSearchQuery.value = DEFAULT_CONFIG.searchQuery;
     }
@@ -1537,7 +1625,7 @@ function setupEventListeners() {
     appState.pendingLocalName = null;
   });
 
-  // Keyboard Shortcuts (ArrowLeft = Prev, ArrowRight = Next, Space = Pause/Resume)
+  // Keyboard Shortcuts (ArrowLeft = Prev, ArrowRight = Next, Space = Pause/Resume, R = Rotate 90°)
   window.addEventListener('keydown', (e) => {
     if (elements.settingsDialog.open || elements.addShortcutDialog.open || ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
       return;
@@ -1550,6 +1638,9 @@ function setupEventListeners() {
     } else if (e.code === 'Space') {
       e.preventDefault();
       togglePause();
+    } else if (e.key === 'r' || e.key === 'R') {
+      e.preventDefault();
+      rotateActiveWallpaper();
     }
   });
 

@@ -56,6 +56,13 @@
           </svg>
         </button>
 
+        <!-- Manual Wallpaper Orientation Rotate -->
+        <button id="rotate-btn" class="glass-btn icon-btn" title="Rotate Wallpaper 90° (R)" aria-label="Rotate Wallpaper">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+          </svg>
+        </button>
+
         <!-- Settings Modal Trigger -->
         <button id="settings-btn" class="glass-btn icon-btn" title="Settings" aria-label="Settings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -310,6 +317,20 @@
             </select>
           </div>
           <span class="field-hint">Choose whether to crop image to screen or keep original dimensions</span>
+        </div>
+
+        <!-- Auto-Rotate Portrait Images to Landscape Toggle -->
+        <div class="form-group toggle-group">
+          <div class="toggle-label-row">
+            <div>
+              <label for="input-auto-rotate" class="toggle-main-label">Auto-Rotate Portrait Images to Landscape</label>
+              <span class="field-hint">Automatically rotates vertical/mobile pins 90° so they fill widescreen 16:9 displays</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="input-auto-rotate" name="autoRotate" checked>
+              <span class="slider-toggle round"></span>
+            </label>
+          </div>
         </div>
 
         <!-- Dim & Vignette Sliders -->

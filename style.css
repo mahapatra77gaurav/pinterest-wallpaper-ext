@@ -70,19 +70,38 @@ html, body {
 /* Ambient backdrop layer (glorious blur behind uncropped images in contain / auto modes) */
 .bg-ambient-layer {
   position: fixed;
-  inset: -20px;
-  width: calc(100vw + 40px);
-  height: calc(100vh + 40px);
+  top: 50%;
+  left: 50%;
+  width: calc(100vw + 60px);
+  height: calc(100vh + 60px);
   background-size: cover !important;
   background-position: center center !important;
   background-repeat: no-repeat !important;
   filter: blur(48px) brightness(0.65) saturate(140%);
-  transform: scale(1.1);
+  transform: translate(-50%, -50%) scale(1.1);
   opacity: 0;
   z-index: 0;
   pointer-events: none;
-  transition: opacity 1.2s var(--transition-crossfade), background-image 1.2s ease;
+  transition: opacity 1.2s var(--transition-crossfade), background-image 1.2s ease, transform 0.4s var(--transition-smooth);
   will-change: opacity, transform;
+}
+
+.bg-ambient-layer.rotate-90 {
+  width: calc(100vh + 60px);
+  height: calc(100vw + 60px);
+  transform: translate(-50%, -50%) rotate(90deg) scale(1.1);
+}
+
+.bg-ambient-layer.rotate-180 {
+  width: calc(100vw + 60px);
+  height: calc(100vh + 60px);
+  transform: translate(-50%, -50%) rotate(180deg) scale(1.1);
+}
+
+.bg-ambient-layer.rotate-270 {
+  width: calc(100vh + 60px);
+  height: calc(100vw + 60px);
+  transform: translate(-50%, -50%) rotate(270deg) scale(1.1);
 }
 
 body.fit-contain .bg-ambient-layer,
@@ -92,18 +111,19 @@ body.fit-auto .bg-ambient-layer {
 
 .bg-layer {
   position: fixed;
-  inset: 0;
+  top: 50%;
+  left: 50%;
   width: 100vw;
   height: 100vh;
   background-size: var(--bg-size, cover);
   background-position: center center !important;
   background-repeat: no-repeat !important;
   filter: blur(var(--bg-blur-amount));
-  transform: scale(1.04);
+  transform: translate(-50%, -50%) scale(1.04);
   opacity: 0;
   z-index: 1;
   pointer-events: none;
-  transition: opacity 1.2s var(--transition-crossfade), transform 1.6s var(--transition-crossfade);
+  transition: opacity 1.2s var(--transition-crossfade), transform 0.4s var(--transition-smooth);
   will-change: opacity, transform;
 }
 
@@ -113,18 +133,64 @@ body.fit-cover .bg-layer {
 
 body.fit-contain .bg-layer {
   background-size: contain !important;
-  transform: scale(1);
 }
 
 body.fit-auto .bg-layer {
   background-size: auto !important;
-  transform: scale(1);
+}
+
+/* Orientation Rotation Support (Full-bleed 16:9 coverage) */
+.bg-layer.rotate-0 {
+  width: 100vw;
+  height: 100vh;
+  transform: translate(-50%, -50%) rotate(0deg) scale(1.02);
+}
+
+.bg-layer.rotate-90 {
+  width: 100vh;
+  height: 100vw;
+  transform: translate(-50%, -50%) rotate(90deg) scale(1.02);
+}
+
+.bg-layer.rotate-180 {
+  width: 100vw;
+  height: 100vh;
+  transform: translate(-50%, -50%) rotate(180deg) scale(1.02);
+}
+
+.bg-layer.rotate-270 {
+  width: 100vh;
+  height: 100vw;
+  transform: translate(-50%, -50%) rotate(270deg) scale(1.02);
 }
 
 .bg-layer.active {
   opacity: 1;
-  transform: scale(1);
   z-index: 2;
+}
+
+.bg-layer.active.rotate-0 {
+  width: 100vw;
+  height: 100vh;
+  transform: translate(-50%, -50%) rotate(0deg) scale(1);
+}
+
+.bg-layer.active.rotate-90 {
+  width: 100vh;
+  height: 100vw;
+  transform: translate(-50%, -50%) rotate(90deg) scale(1);
+}
+
+.bg-layer.active.rotate-180 {
+  width: 100vw;
+  height: 100vh;
+  transform: translate(-50%, -50%) rotate(180deg) scale(1);
+}
+
+.bg-layer.active.rotate-270 {
+  width: 100vh;
+  height: 100vw;
+  transform: translate(-50%, -50%) rotate(270deg) scale(1);
 }
 
 /* Initial fallback gradients to prevent white flash before images load */
@@ -731,6 +797,80 @@ body.fit-auto .bg-layer {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
+}
+
+/* Toggle Switch Styles */
+.toggle-group {
+  margin-top: 0.2rem;
+  padding: 0.75rem 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+}
+
+.toggle-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.toggle-main-label {
+  font-size: 0.88rem !important;
+  font-weight: 600 !important;
+  color: var(--text-primary) !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  margin-bottom: 0.2rem;
+  display: block;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 46px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider-toggle {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--glass-border);
+  transition: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: 26px;
+}
+
+.slider-toggle:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--text-primary);
+  transition: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: 50%;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.switch input:checked + .slider-toggle {
+  background-color: var(--accent-red);
+  border-color: rgba(230, 0, 35, 0.5);
+  box-shadow: 0 0 14px rgba(230, 0, 35, 0.4);
+}
+
+.switch input:checked + .slider-toggle:before {
+  transform: translateX(20px);
+  background-color: #ffffff;
 }
 
 /* Preset Chips */
