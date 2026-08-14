@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <!-- Instant Cold-Start First-Paint (0ms perceptual delay with saved rotation) -->
+  <!-- Instant Cold-Start First-Paint (0ms perceptual delay with saved rotation & cross-tab progression) -->
   <script>
     (function() {
       try {
-        var raw = localStorage.getItem('last_active_wallpaper');
+        var raw = localStorage.getItem('next_cold_start_wallpaper') || localStorage.getItem('last_active_wallpaper');
         if (raw) {
           var wp = JSON.parse(raw);
           if (wp && wp.url) {

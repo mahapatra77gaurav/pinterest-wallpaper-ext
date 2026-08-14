@@ -149,11 +149,11 @@ const elements = {
 // =============================================================================
 
 /**
- * Synchronously renders the last active wallpaper from local cache for 0ms cold-start
+ * Synchronously renders the last active or next upcoming wallpaper from local cache for 0ms cold-start
  */
 function applyColdStartWallpaper() {
   try {
-    const raw = localStorage.getItem('last_active_wallpaper');
+    const raw = localStorage.getItem('next_cold_start_wallpaper') || localStorage.getItem('last_active_wallpaper');
     const rotRaw = localStorage.getItem('wallpaper_rotations');
     const rotations = rotRaw ? JSON.parse(rotRaw) : {};
     if (rotations) {
@@ -186,14 +186,14 @@ function applyColdStartWallpaper() {
   } catch (e) {}
 
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['last_active_wallpaper', 'wallpaper_rotations'], (res) => {
+    chrome.storage.local.get(['next_cold_start_wallpaper', 'last_active_wallpaper', 'wallpaper_rotations'], (res) => {
       if (res && res.wallpaper_rotations) {
         appState.rotations = { ...appState.rotations, ...res.wallpaper_rotations };
       }
-      if (res && res.last_active_wallpaper) {
-        const cached = res.last_active_wallpaper;
+      const cached = res ? (res.next_cold_start_wallpaper || res.last_active_wallpaper) : null;
+      if (cached && cached.url) {
         try {
-          localStorage.setItem('last_active_wallpaper', JSON.stringify(cached));
+          localStorage.setItem('next_cold_start_wallpaper', JSON.stringify(cached));
         } catch (e) {}
 
         const savedRot = (appState.rotations && appState.rotations[cached.url] !== undefined)
@@ -241,6 +241,32 @@ function saveActiveWallpaperToColdStart(wallpaper) {
 }
 
 /**
+ * Saves next sequential wallpaper metadata for instant cold start on subsequent new tabs
+ */
+function saveNextColdStartWallpaper(wallpaper) {
+  if (!wallpaper || !wallpaper.url) return;
+  const rotation = (appState.rotations && appState.rotations[wallpaper.url] !== undefined)
+    ? appState.rotations[wallpaper.url]
+    : (wallpaper.rotation || 0);
+
+  const payload = {
+    title: wallpaper.title || 'Wallpaper',
+    url: wallpaper.url,
+    fallbackUrl: wallpaper.fallbackUrl || wallpaper.url,
+    link: wallpaper.link || '#',
+    rotation: rotation
+  };
+
+  try {
+    localStorage.setItem('next_cold_start_wallpaper', JSON.stringify(payload));
+  } catch (e) {}
+
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.set({ next_cold_start_wallpaper: payload });
+  }
+}
+
+/**
  * Persists orientation angle mapped to a specific image URL
  */
 function saveRotationForUrl(url, degrees) {
@@ -275,15 +301,25 @@ function loadRotations() {
 }
 
 /**
- * Saves active wallpaper queue snapshot to storage for fast session restoration
+ * Saves active wallpaper queue snapshot to storage for fast session restoration & cross-tab progression
  */
 function saveQueueToStorage() {
+  const queuePayload = {
+    wallpaper_global_queue: appState.wallpapers,
+    wallpaper_queue_index: appState.currentIndex,
+    pagination_bookmark: appState.paginationBookmark,
+    active_source_mode: appState.config.sourceMode,
+    active_search_query: appState.config.searchQuery,
+    active_username: appState.config.username,
+    active_board: appState.config.board
+  };
+
+  try {
+    localStorage.setItem('wallpaper_queue_index', appState.currentIndex);
+  } catch (e) {}
+
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    const queueSlice = appState.wallpapers.slice(appState.currentIndex, appState.currentIndex + 25);
-    chrome.storage.local.set({
-      cached_wallpaper_queue: queueSlice,
-      pagination_bookmark: appState.paginationBookmark
-    });
+    chrome.storage.local.set(queuePayload);
   }
 }
 
@@ -1517,6 +1553,18 @@ async function displayWallpaper(index, manual = false) {
   // Persist current wallpaper with rotation to cold-start cache immediately for 0ms next tab load
   saveActiveWallpaperToColdStart(currentItem);
 
+  // Calculate next sequential wallpaper and persist as next cold-start target for future new tabs
+  if (appState.wallpapers.length > 1) {
+    const nextSequentialIdx = (nextIndex + 1) % appState.wallpapers.length;
+    const nextSequentialItem = appState.wallpapers[nextSequentialIdx];
+    if (nextSequentialItem) {
+      saveNextColdStartWallpaper(nextSequentialItem);
+    }
+  }
+
+  // Update global queue state and current pointer across tabs
+  saveQueueToStorage();
+
   // Update Settings Active Status with lazy count
   updateActiveStatusLabel();
 
@@ -2169,11 +2217,44 @@ function setupEventListeners() {
 }
 
 // =============================================================================
-// App Bootstrapper
+// App Bootstrapper & Cross-Tab Queue Synchronization
 // =============================================================================
 
+function setupStorageSyncListener() {
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'local') return;
+
+      if (changes.wallpaper_rotations && changes.wallpaper_rotations.newValue) {
+        appState.rotations = { ...appState.rotations, ...changes.wallpaper_rotations.newValue };
+      }
+
+      // If another tab appended new wallpapers to global queue, merge them seamlessly into local queue
+      if (changes.wallpaper_global_queue && Array.isArray(changes.wallpaper_global_queue.newValue)) {
+        const incomingQueue = changes.wallpaper_global_queue.newValue;
+        let addedCount = 0;
+        incomingQueue.forEach(pin => {
+          if (pin && pin.url && !appState.seenUrls.has(pin.url)) {
+            appState.seenUrls.add(pin.url);
+            appState.wallpaperQueue.push(pin);
+            appState.wallpapers.push(pin);
+            addedCount++;
+          }
+        });
+        if (addedCount > 0) {
+          updateActiveStatusLabel();
+        }
+      }
+
+      if (changes.pagination_bookmark) {
+        appState.paginationBookmark = changes.pagination_bookmark.newValue;
+      }
+    });
+  }
+}
+
 async function initApp() {
-  // 1. Instant First-Paint: Load rotations and apply last active wallpaper synchronously from cold-start cache
+  // 1. Instant First-Paint: Load rotations and apply next/last active wallpaper synchronously from cold-start cache
   loadRotations();
   applyColdStartWallpaper();
 
@@ -2185,29 +2266,61 @@ async function initApp() {
   initClock();
   renderShortcuts();
   setupEventListeners();
+  setupStorageSyncListener();
 
-  // 3. Restore cached queue from previous session so initial clicks work instantly
+  // 3. Check persistent global queue from previous tab session for continuous progression
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['cached_wallpaper_queue', 'pagination_bookmark', 'wallpaper_rotations'], (res) => {
+    chrome.storage.local.get([
+      'wallpaper_global_queue',
+      'wallpaper_queue_index',
+      'pagination_bookmark',
+      'wallpaper_rotations',
+      'active_source_mode',
+      'active_search_query',
+      'active_username',
+      'active_board'
+    ], async (res) => {
       if (res && res.wallpaper_rotations) {
         appState.rotations = { ...appState.rotations, ...res.wallpaper_rotations };
       }
-      if (res && Array.isArray(res.cached_wallpaper_queue) && res.cached_wallpaper_queue.length > 0) {
-        const shuffledCached = shuffleArray([...res.cached_wallpaper_queue]);
-        shuffledCached.forEach(p => {
-          if (!appState.seenUrls.has(p.url)) {
+
+      const isConfigMatch = res &&
+        Array.isArray(res.wallpaper_global_queue) &&
+        res.wallpaper_global_queue.length > 0 &&
+        res.active_source_mode === appState.config.sourceMode &&
+        (appState.config.sourceMode !== 'pinterest-search' || res.active_search_query === appState.config.searchQuery) &&
+        (appState.config.sourceMode === 'pinterest-search' || res.active_username === appState.config.username) &&
+        (appState.config.sourceMode !== 'pinterest-board' || res.active_board === appState.config.board);
+
+      if (isConfigMatch) {
+        // Restore active stream queue
+        appState.seenUrls.clear();
+        res.wallpaper_global_queue.forEach(p => {
+          if (p && p.url) {
             appState.seenUrls.add(p.url);
             appState.wallpaperQueue.push(p);
             appState.wallpapers.push(p);
           }
         });
-        if (res.pagination_bookmark) {
-          appState.paginationBookmark = res.pagination_bookmark;
+        appState.paginationBookmark = res.pagination_bookmark || null;
+
+        // Resume progression: Advance to next sequential wallpaper from where previous tab left off
+        const prevIndex = (typeof res.wallpaper_queue_index === 'number') ? res.wallpaper_queue_index : 0;
+        const resumedIndex = (prevIndex + 1) % appState.wallpapers.length;
+        appState.currentIndex = resumedIndex;
+
+        await displayWallpaper(resumedIndex, false);
+        startCycleTimer();
+
+        // Check if queue needs buffer refill
+        const unviewedRemaining = appState.wallpapers.length - (appState.currentIndex + 1);
+        if (unviewedRemaining <= 6) {
+          fetchNextBatch();
         }
+      } else {
+        // Mode changed or initial cold load: Fetch full batch stream
+        loadWallpapersByMode(false);
       }
-      
-      // 4. Stream wallpapers in background & initialize live cycle
-      loadWallpapersByMode(false);
     });
   } else {
     loadWallpapersByMode(false);
