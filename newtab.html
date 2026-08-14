@@ -10,17 +10,17 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- Dual Background Layers for Seamless Crossfade -->
+  <!-- Dual Background Layers for Seamless Crossfade (Enforced Cover & Center Auto-Cropping) -->
   <div id="bg-1" class="bg-layer active" aria-hidden="true"></div>
   <div id="bg-2" class="bg-layer" aria-hidden="true"></div>
 
-  <!-- Radial Vignette Overlay for Readability -->
+  <!-- Radial Vignette & Contrast Overlay Layer -->
   <div class="vignette-overlay" aria-hidden="true"></div>
 
-  <!-- Main Viewport Layout -->
+  <!-- Main Application Container -->
   <div class="app-container">
     
-    <!-- Top Bar: Current Pin Info & Quick Action Floating Dock -->
+    <!-- Top Bar: Current Wallpaper Attribution & Action Controls -->
     <header class="top-bar">
       <div id="wallpaper-info" class="wallpaper-info" title="Current wallpaper details">
         <a id="pin-link" href="#" target="_blank" rel="noopener noreferrer" class="pin-link glass-pill">
@@ -32,14 +32,14 @@
       </div>
 
       <div class="top-actions">
-        <!-- Manual Wallpaper Navigation -->
-        <button id="prev-btn" class="glass-btn icon-btn" title="Previous Wallpaper" aria-label="Previous Wallpaper">
+        <!-- Manual Wallpaper Navigation (Active in Cycling Modes) -->
+        <button id="prev-btn" class="glass-btn icon-btn" title="Previous Wallpaper (←)" aria-label="Previous Wallpaper">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 18 9 12 15 6"></polyline>
           </svg>
         </button>
 
-        <button id="pause-btn" class="glass-btn icon-btn" title="Pause / Play Cycling" aria-label="Pause / Play Cycling">
+        <button id="pause-btn" class="glass-btn icon-btn" title="Pause / Play Cycling (Space)" aria-label="Pause / Play Cycling">
           <svg id="pause-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="6" y="4" width="4" height="16"></rect>
             <rect x="14" y="4" width="4" height="16"></rect>
@@ -49,7 +49,7 @@
           </svg>
         </button>
 
-        <button id="next-btn" class="glass-btn icon-btn" title="Next Wallpaper" aria-label="Next Wallpaper">
+        <button id="next-btn" class="glass-btn icon-btn" title="Next Wallpaper (→)" aria-label="Next Wallpaper">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="9 18 15 12 9 6"></polyline>
           </svg>
@@ -65,7 +65,7 @@
       </div>
     </header>
 
-    <!-- Central Hero Container: Clock, Date, and Sleek Web Search -->
+    <!-- Central Hero Container: Clock, Date, and Search -->
     <main class="center-content">
       <div class="clock-container">
         <h1 id="time" class="time-display">--:--</h1>
@@ -84,16 +84,74 @@
       </form>
     </main>
 
-    <!-- Bottom Section: Native Chrome Shortcuts Dock -->
+    <!-- Bottom Section: Editable Chrome Shortcuts Dock -->
     <footer class="bottom-dock">
-      <div id="shortcuts" class="shortcuts-container glass-panel" role="region" aria-label="Top Visited Sites">
-        <!-- Dynamic Shortcut Tiles injected via newtab.js -->
+      <div id="shortcuts" class="shortcuts-container glass-panel" role="region" aria-label="Quick Shortcuts">
+        <!-- Dynamic Shortcut Cards + Add Button injected via newtab.js -->
         <div class="shortcuts-loading">
           <span class="pulse-dot"></span>
         </div>
       </div>
     </footer>
   </div>
+
+  <!-- Add New Shortcut Dialog Modal -->
+  <dialog id="add-shortcut-dialog" class="settings-modal glass-modal add-shortcut-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-icon-badge shortcut-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </div>
+          <div>
+            <h2>Add New Shortcut</h2>
+            <p class="modal-subtitle">Add a quick-access shortcut tile to your dock</p>
+          </div>
+        </div>
+        <button id="close-add-shortcut-btn" class="close-btn glass-btn icon-btn" aria-label="Close modal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <form id="add-shortcut-form" class="settings-form">
+        <div class="form-group">
+          <label for="input-shortcut-title">Shortcut Name / Title</label>
+          <div class="input-wrapper">
+            <input type="text" id="input-shortcut-title" placeholder="e.g. GitHub, Notion, Reddit" autocomplete="off">
+          </div>
+          <span class="field-hint">Leave blank to auto-detect from URL</span>
+        </div>
+
+        <div class="form-group">
+          <label for="input-shortcut-url">Website URL</label>
+          <div class="input-wrapper">
+            <input type="text" id="input-shortcut-url" placeholder="e.g. https://github.com or notion.so" required autocomplete="off" spellcheck="false">
+          </div>
+          <span class="field-hint">The destination webpage link</span>
+        </div>
+
+        <div class="modal-footer">
+          <div></div>
+          <div class="modal-actions-right">
+            <button type="button" id="cancel-add-shortcut-btn" class="glass-btn secondary-btn">Cancel</button>
+            <button type="submit" class="glass-btn primary-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add Shortcut
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </dialog>
 
   <!-- Settings Dialog Modal -->
   <dialog id="settings-dialog" class="settings-modal glass-modal">
@@ -107,7 +165,7 @@
           </div>
           <div>
             <h2>Wallpaper & Tab Settings</h2>
-            <p class="modal-subtitle">Configure your dynamic Pinterest board stream</p>
+            <p class="modal-subtitle">Customize wallpaper sourcing, dock shortcuts, and theme</p>
           </div>
         </div>
         <button id="close-modal-btn" class="close-btn glass-btn icon-btn" aria-label="Close modal">
@@ -119,8 +177,24 @@
       </div>
 
       <form id="settings-form" class="settings-form" method="dialog">
-        <!-- Quick Presets Carousel/Chips -->
+        <!-- 1. Wallpaper Sourcing Mode Selector -->
         <div class="form-group">
+          <label for="select-source-mode">Wallpaper Sourcing Mode</label>
+          <div class="select-wrapper">
+            <select id="select-source-mode" name="sourceMode">
+              <option value="pinterest-board">📌 Pinterest Board (https://pinterest.com/user/board.rss)</option>
+              <option value="pinterest-feed">⚡ Pinterest User Feed (https://pinterest.com/user/feed.rss)</option>
+              <option value="direct-url">🔗 Direct Image URL</option>
+              <option value="local-upload">📁 Local Image File Upload</option>
+            </select>
+          </div>
+          <span class="field-hint">Choose how wallpapers are fetched and displayed</span>
+        </div>
+
+        <!-- 2. Conditional Form Fields -->
+        
+        <!-- Pinterest Board Presets (Shown for Board mode) -->
+        <div id="group-presets" class="form-group conditional-group">
           <label class="section-label">Aesthetic Board Presets</label>
           <div class="preset-chips">
             <button type="button" class="preset-chip" data-user="pinterest" data-board="wallpapers">📌 Default Wallpapers</button>
@@ -132,36 +206,64 @@
           </div>
         </div>
 
-        <div class="form-grid">
-          <!-- Pinterest Username -->
-          <div class="form-group">
-            <label for="input-username">Pinterest Username</label>
-            <div class="input-wrapper">
-              <span class="input-prefix">@</span>
-              <input type="text" id="input-username" name="username" placeholder="e.g. pinterest" required autocomplete="off" spellcheck="false">
-            </div>
-            <span class="field-hint">The creator or profile handle</span>
+        <!-- Pinterest Username (Shown for Board & Feed modes) -->
+        <div id="group-pinterest-user" class="form-group conditional-group">
+          <label for="input-username">Pinterest Username</label>
+          <div class="input-wrapper">
+            <span class="input-prefix">@</span>
+            <input type="text" id="input-username" name="username" placeholder="e.g. pinterest" autocomplete="off" spellcheck="false">
           </div>
-
-          <!-- Board Slug -->
-          <div class="form-group">
-            <label for="input-board">Board Slug / Name</label>
-            <div class="input-wrapper">
-              <input type="text" id="input-board" name="board" placeholder="e.g. wallpapers" required autocomplete="off" spellcheck="false">
-            </div>
-            <span class="field-hint">The board URL slug (e.g. aesthetic-wallpapers)</span>
-          </div>
+          <span class="field-hint">Pinterest profile handle</span>
         </div>
 
-        <div class="form-grid">
-          <!-- Cycle Interval -->
+        <!-- Board Slug (Shown only for Board mode) -->
+        <div id="group-pinterest-board" class="form-group conditional-group">
+          <label for="input-board">Board Slug / Name</label>
+          <div class="input-wrapper">
+            <input type="text" id="input-board" name="board" placeholder="e.g. wallpapers" autocomplete="off" spellcheck="false">
+          </div>
+          <span class="field-hint">Board URL slug (e.g. wallpapers or aesthetic-landscapes)</span>
+        </div>
+
+        <!-- Direct Image URL (Shown only for Direct URL mode) -->
+        <div id="group-direct-url" class="form-group conditional-group hidden">
+          <label for="input-direct-url">Direct Image URL</label>
+          <div class="input-wrapper">
+            <input type="url" id="input-direct-url" name="directUrl" placeholder="https://images.unsplash.com/... or any high-res image link" autocomplete="off" spellcheck="false">
+          </div>
+          <span class="field-hint">Direct link to any high-res image (JPG, PNG, WebP)</span>
+        </div>
+
+        <!-- Local File Upload (Shown only for Local Upload mode) -->
+        <div id="group-local-upload" class="form-group conditional-group hidden">
+          <label for="input-local-file">Upload Image from Disk</label>
+          <div class="file-upload-zone" id="file-dropzone">
+            <input type="file" id="input-local-file" accept="image/png, image/jpeg, image/webp, image/gif" class="file-input-hidden">
+            <label for="input-local-file" class="file-upload-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              <span id="file-upload-text">Choose an image or drop here</span>
+            </label>
+          </div>
+          <div id="local-preview-container" class="local-preview-container hidden">
+            <img id="local-preview-img" alt="Local Wallpaper Preview" class="local-preview-thumb">
+            <span id="local-preview-name" class="local-preview-name"></span>
+          </div>
+          <span class="field-hint">Saved locally via unlimitedStorage. Supports high-res 4K/retina wallpapers.</span>
+        </div>
+
+        <!-- Cycle Interval (Shown for cycling modes) -->
+        <div id="group-interval" class="form-grid conditional-group">
           <div class="form-group">
             <label for="input-interval">Cycle Interval (Seconds)</label>
             <div class="input-wrapper">
-              <input type="number" id="input-interval" name="interval" min="5" max="3600" step="1" value="30" required>
+              <input type="number" id="input-interval" name="interval" min="5" max="3600" step="1" value="30">
               <span class="input-suffix">sec</span>
             </div>
-            <span class="field-hint">Min 5 seconds, max 3600 (1 hour)</span>
+            <span class="field-hint">Wallpaper change frequency (min 5s)</span>
           </div>
 
           <!-- Time Format -->
@@ -173,14 +275,14 @@
                 <option value="24h">24-Hour (17:30)</option>
               </select>
             </div>
-            <span class="field-hint">Customize new tab clock style</span>
+            <span class="field-hint">Customize clock format</span>
           </div>
         </div>
 
         <!-- Dim & Vignette Sliders -->
         <div class="form-grid">
           <div class="form-group">
-            <label for="input-dim">Background Overlay Dim (<span id="dim-val">25</span>%)</label>
+            <label for="input-dim">Background Dim (<span id="dim-val">25</span>%)</label>
             <input type="range" id="input-dim" name="dim" min="0" max="80" value="25" class="slider">
           </div>
 
@@ -190,10 +292,10 @@
           </div>
         </div>
 
-        <!-- Live RSS Feed URL Preview & Status -->
+        <!-- Live Status / URL Feedback Box -->
         <div id="status-container" class="status-box">
           <span id="status-icon" class="status-indicator"></span>
-          <span id="status-msg">Ready to fetch Pinterest feed.</span>
+          <span id="status-msg">Ready to load wallpapers.</span>
         </div>
 
         <!-- Form Actions -->

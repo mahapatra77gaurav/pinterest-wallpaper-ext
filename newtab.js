@@ -1,6 +1,6 @@
 /**
  * Pinterest Dynamic New Tab (Manifest V3)
- * High-performance, aesthetic wallpaper cycler and native Chrome shortcuts.
+ * High-performance, multi-source wallpaper cycler and editable Chrome shortcuts.
  */
 
 // =============================================================================
@@ -8,15 +8,19 @@
 // =============================================================================
 
 const DEFAULT_CONFIG = {
+  sourceMode: 'pinterest-board', // 'pinterest-board' | 'pinterest-feed' | 'direct-url' | 'local-upload'
   username: 'pinterest',
   board: 'wallpapers',
+  directUrl: '',
+  localImageBase64: '',
+  localImageName: '',
   interval: 30, // seconds
   timeFormat: '12h',
   dim: 25, // percentage
   blur: 0 // pixels
 };
 
-// Curated high-res aesthetic fallback wallpapers (Unsplash CDN) in case of network issues or empty boards
+// Curated high-res aesthetic fallback wallpapers (Unsplash CDN)
 const FALLBACK_WALLPAPERS = [
   {
     title: 'Neon Cyberpunk Cityscape',
@@ -47,12 +51,15 @@ const FALLBACK_WALLPAPERS = [
 
 let appState = {
   config: { ...DEFAULT_CONFIG },
+  userShortcuts: [],
   wallpapers: [],
   currentIndex: 0,
   activeLayer: 1, // 1 for #bg-1, 2 for #bg-2
   cycleTimer: null,
   isPaused: false,
-  isLoadingFeed: false
+  isLoadingFeed: false,
+  pendingLocalBase64: null,
+  pendingLocalName: null
 };
 
 // =============================================================================
@@ -78,8 +85,26 @@ const elements = {
   cancelBtn: document.getElementById('cancel-btn'),
   resetBtn: document.getElementById('reset-btn'),
   settingsForm: document.getElementById('settings-form'),
+  
+  // Settings Form Inputs
+  selectSourceMode: document.getElementById('select-source-mode'),
+  groupPresets: document.getElementById('group-presets'),
+  groupPinterestUser: document.getElementById('group-pinterest-user'),
+  groupPinterestBoard: document.getElementById('group-pinterest-board'),
+  groupDirectUrl: document.getElementById('group-direct-url'),
+  groupLocalUpload: document.getElementById('group-local-upload'),
+  groupInterval: document.getElementById('group-interval'),
+  
   inputUsername: document.getElementById('input-username'),
   inputBoard: document.getElementById('input-board'),
+  inputDirectUrl: document.getElementById('input-direct-url'),
+  inputLocalFile: document.getElementById('input-local-file'),
+  fileDropzone: document.getElementById('file-dropzone'),
+  fileUploadText: document.getElementById('file-upload-text'),
+  localPreviewContainer: document.getElementById('local-preview-container'),
+  localPreviewImg: document.getElementById('local-preview-img'),
+  localPreviewName: document.getElementById('local-preview-name'),
+  
   inputInterval: document.getElementById('input-interval'),
   inputTimeFormat: document.getElementById('input-timeformat'),
   inputDim: document.getElementById('input-dim'),
@@ -91,11 +116,19 @@ const elements = {
   presetChips: document.querySelectorAll('.preset-chip'),
   toast: document.getElementById('toast'),
   searchForm: document.getElementById('search-form'),
-  searchInput: document.getElementById('search-input')
+  searchInput: document.getElementById('search-input'),
+
+  // Add Shortcut Dialog
+  addShortcutDialog: document.getElementById('add-shortcut-dialog'),
+  addShortcutForm: document.getElementById('add-shortcut-form'),
+  closeAddShortcutBtn: document.getElementById('close-add-shortcut-btn'),
+  cancelAddShortcutBtn: document.getElementById('cancel-add-shortcut-btn'),
+  inputShortcutTitle: document.getElementById('input-shortcut-title'),
+  inputShortcutUrl: document.getElementById('input-shortcut-url')
 };
 
 // =============================================================================
-// Storage Layer (Chrome Storage with LocalStorage fallback)
+// Storage Layer (chrome.storage.local with LocalStorage fallback)
 // =============================================================================
 
 async function loadConfig() {
@@ -142,7 +175,6 @@ async function saveConfig(newConfig) {
 function updateClock() {
   const now = new Date();
   
-  // Format Time
   const is12h = appState.config.timeFormat === '12h';
   let hours = now.getHours();
   const minutes = String(now.getMinutes()).padStart(2, '0');
@@ -156,7 +188,6 @@ function updateClock() {
     elements.time.textContent = `${formattedHours}:${minutes}`;
   }
 
-  // Format Date (e.g. "Friday, August 14")
   const dateOptions = { weekday: 'long', month: 'long', day: 'numeric' };
   elements.date.textContent = now.toLocaleDateString(undefined, dateOptions);
 }
@@ -167,22 +198,63 @@ function initClock() {
 }
 
 // =============================================================================
-// Chrome Top Sites & Shortcuts Dock
+// Editable Shortcuts Dock (chrome.storage.local seeded from topSites)
 // =============================================================================
 
-function getDomain(urlStr) {
+function getCleanDomain(urlStr) {
   try {
-    const parsed = new URL(urlStr);
+    let formatted = urlStr.trim();
+    if (!/^https?:\/\//i.test(formatted)) {
+      formatted = 'https://' + formatted;
+    }
+    const parsed = new URL(formatted);
     return parsed.hostname.replace(/^www\./, '');
   } catch (e) {
     return urlStr;
   }
 }
 
-function renderShortcuts(sites) {
-  elements.shortcuts.innerHTML = '';
-  
-  const siteList = (sites && sites.length > 0) ? sites.slice(0, 10) : [
+function formatUrl(urlStr) {
+  let formatted = urlStr.trim();
+  if (!/^https?:\/\//i.test(formatted)) {
+    formatted = 'https://' + formatted;
+  }
+  return formatted;
+}
+
+async function loadUserShortcuts() {
+  return new Promise((resolve) => {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get(['user_shortcuts'], (result) => {
+        if (result && Array.isArray(result.user_shortcuts)) {
+          resolve(result.user_shortcuts);
+        } else {
+          // Seed from chrome.topSites.get() on first run
+          seedFromTopSites().then((seeded) => {
+            saveUserShortcuts(seeded);
+            resolve(seeded);
+          });
+        }
+      });
+    } else {
+      try {
+        const saved = localStorage.getItem('user_shortcuts');
+        if (saved) {
+          resolve(JSON.parse(saved));
+        } else {
+          const defaultSites = getDefaultShortcuts();
+          localStorage.setItem('user_shortcuts', JSON.stringify(defaultSites));
+          resolve(defaultSites);
+        }
+      } catch (e) {
+        resolve(getDefaultShortcuts());
+      }
+    }
+  });
+}
+
+function getDefaultShortcuts() {
+  return [
     { title: 'Google', url: 'https://www.google.com' },
     { title: 'YouTube', url: 'https://www.youtube.com' },
     { title: 'GitHub', url: 'https://www.github.com' },
@@ -192,17 +264,75 @@ function renderShortcuts(sites) {
     { title: 'Spotify', url: 'https://open.spotify.com' },
     { title: 'Netflix', url: 'https://www.netflix.com' }
   ];
+}
 
-  siteList.forEach((site) => {
-    const domain = getDomain(site.url);
+async function seedFromTopSites() {
+  return new Promise((resolve) => {
+    if (typeof chrome !== 'undefined' && chrome.topSites && chrome.topSites.get) {
+      chrome.topSites.get((sites) => {
+        if (chrome.runtime.lastError || !sites || sites.length === 0) {
+          resolve(getDefaultShortcuts());
+        } else {
+          const formatted = sites.slice(0, 10).map(s => ({
+            title: s.title || getCleanDomain(s.url),
+            url: s.url
+          }));
+          resolve(formatted.length > 0 ? formatted : getDefaultShortcuts());
+        }
+      });
+    } else {
+      resolve(getDefaultShortcuts());
+    }
+  });
+}
+
+async function saveUserShortcuts(shortcutsList) {
+  appState.userShortcuts = shortcutsList;
+  return new Promise((resolve) => {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ user_shortcuts: shortcutsList }, () => resolve());
+    } else {
+      try {
+        localStorage.setItem('user_shortcuts', JSON.stringify(shortcutsList));
+      } catch (e) {}
+      resolve();
+    }
+  });
+}
+
+function renderShortcuts() {
+  elements.shortcuts.innerHTML = '';
+  
+  const list = appState.userShortcuts || [];
+
+  list.forEach((site, index) => {
+    const domain = getCleanDomain(site.url);
     const title = site.title || domain;
     const faviconUrl = `https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(site.url)}&sz=64`;
     const initial = (title || 'W').charAt(0).toUpperCase();
 
     const link = document.createElement('a');
     link.className = 'shortcut-card';
-    link.href = site.url;
+    link.href = formatUrl(site.url);
     link.title = `${title} (${site.url})`;
+
+    // Delete Button (✕)
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'shortcut-delete-btn';
+    deleteBtn.type = 'button';
+    deleteBtn.title = `Delete ${title}`;
+    deleteBtn.setAttribute('aria-label', `Delete ${title}`);
+    deleteBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    `;
+    deleteBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      deleteShortcut(index);
+    });
 
     const iconBox = document.createElement('div');
     iconBox.className = 'shortcut-icon-box';
@@ -213,7 +343,7 @@ function renderShortcuts(sites) {
     img.alt = title;
     img.loading = 'lazy';
 
-    // Fallback letter avatar on error
+    // Letter avatar fallback
     img.onerror = () => {
       img.remove();
       const letter = document.createElement('span');
@@ -228,29 +358,64 @@ function renderShortcuts(sites) {
     titleSpan.className = 'shortcut-title';
     titleSpan.textContent = title;
 
+    link.appendChild(deleteBtn);
     link.appendChild(iconBox);
     link.appendChild(titleSpan);
     elements.shortcuts.appendChild(link);
   });
+
+  // "+ Add" Tile Button
+  const addBtn = document.createElement('button');
+  addBtn.className = 'shortcut-add-card';
+  addBtn.type = 'button';
+  addBtn.title = 'Add New Shortcut';
+  addBtn.setAttribute('aria-label', 'Add New Shortcut');
+  addBtn.innerHTML = `
+    <div class="shortcut-add-icon-box">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+      </svg>
+    </div>
+    <span class="shortcut-title">+ Add</span>
+  `;
+  addBtn.addEventListener('click', openAddShortcutModal);
+  elements.shortcuts.appendChild(addBtn);
 }
 
-function initShortcuts() {
-  if (typeof chrome !== 'undefined' && chrome.topSites && chrome.topSites.get) {
-    chrome.topSites.get((sites) => {
-      if (chrome.runtime.lastError || !sites || sites.length === 0) {
-        renderShortcuts([]);
-      } else {
-        renderShortcuts(sites);
-      }
-    });
-  } else {
-    // Fallback for previewing
-    renderShortcuts([]);
+async function deleteShortcut(index) {
+  const list = [...appState.userShortcuts];
+  if (index >= 0 && index < list.length) {
+    const deleted = list.splice(index, 1);
+    await saveUserShortcuts(list);
+    renderShortcuts();
+    showToast(`Removed shortcut: ${deleted[0]?.title || 'Item'}`);
   }
 }
 
+async function addShortcut(title, url) {
+  const cleanUrl = formatUrl(url);
+  const cleanTitle = title.trim() || getCleanDomain(cleanUrl);
+  
+  const list = [...appState.userShortcuts, { title: cleanTitle, url: cleanUrl }];
+  await saveUserShortcuts(list);
+  renderShortcuts();
+  showToast(`Added shortcut: ${cleanTitle}`);
+}
+
+function openAddShortcutModal() {
+  elements.inputShortcutTitle.value = '';
+  elements.inputShortcutUrl.value = '';
+  elements.addShortcutDialog.showModal();
+  elements.inputShortcutUrl.focus();
+}
+
+function closeAddShortcutModal() {
+  elements.addShortcutDialog.close();
+}
+
 // =============================================================================
-// Pinterest RSS Parser & High-Resolution Image Upgrade
+// Pinterest RSS Parser & High-Resolution Image Upgrade Engine
 // =============================================================================
 
 function sanitizeString(str) {
@@ -259,24 +424,14 @@ function sanitizeString(str) {
 }
 
 /**
- * Upgrades standard Pinterest thumbnails (/236x/, /474x/, /736x/, etc.) to /originals/
+ * Upgrades Pinterest thumbnail image URLs to /originals/
  */
 function upgradePinterestImageUrl(rawUrl) {
   if (!rawUrl) return null;
-  // Replace resolution path component e.g. /236x/, /474x/, /564x/, /736x/ or /1200x/ with /originals/
   return rawUrl.replace(/\/(?:[0-9]+x[0-9]*|[0-9]+x)\//i, '/originals/');
 }
 
-async function fetchPinterestRSS(username, board) {
-  const cleanUser = sanitizeString(username);
-  const cleanBoard = sanitizeString(board);
-
-  if (!cleanUser || !cleanBoard) {
-    throw new Error('Please specify both a Pinterest username and a board name.');
-  }
-
-  const rssUrl = `https://www.pinterest.com/${encodeURIComponent(cleanUser)}/${encodeURIComponent(cleanBoard)}.rss`;
-
+async function fetchPinterestRSS(rssUrl, fallbackTitle) {
   const response = await fetch(rssUrl, {
     method: 'GET',
     headers: {
@@ -285,52 +440,50 @@ async function fetchPinterestRSS(username, board) {
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch RSS (${response.status}: ${response.statusText}). Check username/board.`);
+    throw new Error(`Failed to fetch RSS (${response.status}: ${response.statusText}). Check username or board.`);
   }
 
   const xmlText = await response.text();
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
 
-  // Check for XML parse errors
-  const parseError = xmlDoc.querySelector('parsererror');
-  if (parseError) {
+  if (xmlDoc.querySelector('parsererror')) {
     throw new Error('Invalid XML response received from Pinterest.');
   }
 
   const items = xmlDoc.querySelectorAll('item');
   if (!items || items.length === 0) {
-    throw new Error('No pins found in this board. The board might be private or empty.');
+    throw new Error('No pins found in this feed or board.');
   }
 
   const parsedWallpapers = [];
 
   items.forEach((item) => {
-    const title = item.querySelector('title')?.textContent || 'Pinterest Wallpaper';
-    const link = item.querySelector('link')?.textContent || `https://www.pinterest.com/${cleanUser}/${cleanBoard}`;
+    const title = item.querySelector('title')?.textContent || fallbackTitle || 'Pinterest Wallpaper';
+    const link = item.querySelector('link')?.textContent || 'https://www.pinterest.com';
     
     let rawImgUrl = null;
 
-    // 1. Try enclosure tag
-    const enclosure = item.querySelector('enclosure');
-    if (enclosure && enclosure.getAttribute('url')) {
-      rawImgUrl = enclosure.getAttribute('url');
+    // 1. Check description <img> tag
+    const description = item.querySelector('description')?.textContent || '';
+    const match = description.match(/src=["'](https?:\/\/[^"']+\.pinimg\.com\/[^"']+)["']/i);
+    if (match && match[1]) {
+      rawImgUrl = match[1];
     }
 
-    // 2. Try media:content tag
+    // 2. Check enclosure
+    if (!rawImgUrl) {
+      const enclosure = item.querySelector('enclosure');
+      if (enclosure && enclosure.getAttribute('url')) {
+        rawImgUrl = enclosure.getAttribute('url');
+      }
+    }
+
+    // 3. Check media:content
     if (!rawImgUrl) {
       const mediaContent = item.getElementsByTagName('media:content')[0];
       if (mediaContent && mediaContent.getAttribute('url')) {
         rawImgUrl = mediaContent.getAttribute('url');
-      }
-    }
-
-    // 3. Try description HTML content (<img> src)
-    if (!rawImgUrl) {
-      const description = item.querySelector('description')?.textContent || '';
-      const match = description.match(/src=["'](https?:\/\/[^"']+\.pinimg\.com\/[^"']+)["']/i);
-      if (match && match[1]) {
-        rawImgUrl = match[1];
       }
     }
 
@@ -346,14 +499,14 @@ async function fetchPinterestRSS(username, board) {
   });
 
   if (parsedWallpapers.length === 0) {
-    throw new Error('No valid image URLs found in the Pinterest feed.');
+    throw new Error('No valid images found in the RSS feed.');
   }
 
   return parsedWallpapers;
 }
 
 // =============================================================================
-// Wallpaper Preloader & Dual-Layer Crossfade Engine
+// Wallpaper Preloader & Dual-Layer Crossfade Cycler
 // =============================================================================
 
 function preloadImage(wallpaper) {
@@ -365,7 +518,7 @@ function preloadImage(wallpaper) {
     };
 
     img.onerror = () => {
-      // If /originals/ failed (some pins only have 736x), try the fallback thumbnail URL
+      // If /originals/ resolution is unavailable for older pins, fallback to thumbnail/736x
       if (wallpaper.fallbackUrl && wallpaper.fallbackUrl !== wallpaper.url) {
         const fallbackImg = new Image();
         fallbackImg.onload = () => resolve({ success: true, src: wallpaper.fallbackUrl });
@@ -383,33 +536,28 @@ function preloadImage(wallpaper) {
 async function displayWallpaper(index, manual = false) {
   if (appState.wallpapers.length === 0) return;
 
-  // Wrap around index
   const safeIndex = (index + appState.wallpapers.length) % appState.wallpapers.length;
   appState.currentIndex = safeIndex;
   const currentItem = appState.wallpapers[safeIndex];
 
-  // Preload image before switching layers to eliminate flicker
+  // Preload before crossfading
   const result = await preloadImage(currentItem);
-  const imageSrc = result.success ? (result.src || currentItem.url) : currentItem.fallbackUrl || currentItem.url;
+  const imageSrc = result.success ? (result.src || currentItem.url) : (currentItem.fallbackUrl || currentItem.url);
 
-  // Determine active and inactive background layers
   const nextLayerNum = appState.activeLayer === 1 ? 2 : 1;
   const activeLayerEl = appState.activeLayer === 1 ? elements.bg1 : elements.bg2;
   const nextLayerEl = nextLayerNum === 1 ? elements.bg1 : elements.bg2;
 
-  // Apply new background image to the inactive layer first
   nextLayerEl.style.backgroundImage = `url("${imageSrc}")`;
 
-  // Crossfade: toggle active class
   nextLayerEl.classList.add('active');
   activeLayerEl.classList.remove('active');
 
   appState.activeLayer = nextLayerNum;
 
-  // Update Pin title and link
-  elements.pinTitle.textContent = currentItem.title || 'Pinterest Wallpaper';
-  elements.pinLink.href = currentItem.link || 'https://www.pinterest.com';
-  elements.pinLink.title = `View on Pinterest: ${currentItem.title}`;
+  elements.pinTitle.textContent = currentItem.title || 'Wallpaper';
+  elements.pinLink.href = currentItem.link || '#';
+  elements.pinLink.title = `View Source: ${currentItem.title}`;
 
   if (manual) {
     resetCycleTimer();
@@ -417,20 +565,20 @@ async function displayWallpaper(index, manual = false) {
 }
 
 function nextWallpaper(manual = true) {
-  displayWallpaper(appState.currentIndex + 1, manual);
+  if (appState.wallpapers.length > 1) {
+    displayWallpaper(appState.currentIndex + 1, manual);
+  }
 }
 
 function prevWallpaper(manual = true) {
-  displayWallpaper(appState.currentIndex - 1, manual);
+  if (appState.wallpapers.length > 1) {
+    displayWallpaper(appState.currentIndex - 1, manual);
+  }
 }
-
-// =============================================================================
-// Wallpaper Cycler Timer
-// =============================================================================
 
 function startCycleTimer() {
   stopCycleTimer();
-  if (appState.isPaused) return;
+  if (appState.isPaused || appState.wallpapers.length <= 1) return;
 
   const intervalMs = Math.max(5, appState.config.interval || 30) * 1000;
   appState.cycleTimer = setInterval(() => {
@@ -451,6 +599,8 @@ function resetCycleTimer() {
 }
 
 function togglePause() {
+  if (appState.wallpapers.length <= 1) return;
+
   appState.isPaused = !appState.isPaused;
   if (appState.isPaused) {
     stopCycleTimer();
@@ -465,37 +615,87 @@ function togglePause() {
   }
 }
 
+function shuffleArray(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
 // =============================================================================
-// Feed Loader & Sync Engine
+// Wallpaper Sourcing Loader
 // =============================================================================
 
-async function loadFeedAndCycle(notify = false) {
+async function loadWallpapersByMode(notify = false) {
   if (appState.isLoadingFeed) return;
   appState.isLoadingFeed = true;
 
-  updateStatus('loading', `Fetching @${appState.config.username}/${appState.config.board}...`);
+  const mode = appState.config.sourceMode || 'pinterest-board';
 
   try {
-    const pins = await fetchPinterestRSS(appState.config.username, appState.config.board);
-    
-    // Shuffle array slightly for dynamic variety on tab load
-    appState.wallpapers = shuffleArray([...pins]);
-    appState.currentIndex = 0;
-    
-    updateStatus('ready', `Active: @${appState.config.username}/${appState.config.board} (${pins.length} wallpapers)`);
-    
-    if (notify) {
-      showToast(`Loaded ${pins.length} wallpapers from Pinterest`);
+    if (mode === 'pinterest-board') {
+      const user = sanitizeString(appState.config.username) || 'pinterest';
+      const board = sanitizeString(appState.config.board) || 'wallpapers';
+      const rssUrl = `https://www.pinterest.com/${encodeURIComponent(user)}/${encodeURIComponent(board)}.rss`;
+      
+      updateStatus('loading', `Fetching @${user}/${board}...`);
+      const pins = await fetchPinterestRSS(rssUrl, `Pinterest: @${user}/${board}`);
+      
+      appState.wallpapers = shuffleArray([...pins]);
+      updateStatus('ready', `Active: @${user}/${board} (${pins.length} wallpapers)`);
+      if (notify) showToast(`Loaded ${pins.length} wallpapers from Pinterest Board`);
+
+    } else if (mode === 'pinterest-feed') {
+      const user = sanitizeString(appState.config.username) || 'pinterest';
+      const rssUrl = `https://www.pinterest.com/${encodeURIComponent(user)}/feed.rss`;
+      
+      updateStatus('loading', `Fetching user feed for @${user}...`);
+      const pins = await fetchPinterestRSS(rssUrl, `Pinterest: @${user} Feed`);
+      
+      appState.wallpapers = shuffleArray([...pins]);
+      updateStatus('ready', `Active: @${user} Feed (${pins.length} wallpapers)`);
+      if (notify) showToast(`Loaded ${pins.length} wallpapers from @${user} Feed`);
+
+    } else if (mode === 'direct-url') {
+      const url = (appState.config.directUrl || '').trim();
+      if (!url) {
+        throw new Error('Please enter a valid Direct Image URL in settings.');
+      }
+      appState.wallpapers = [{
+        title: 'Custom Direct Wallpaper',
+        url: url,
+        fallbackUrl: url,
+        link: url
+      }];
+      updateStatus('ready', 'Active: Direct Image URL');
+      if (notify) showToast('Direct image wallpaper applied');
+
+    } else if (mode === 'local-upload') {
+      const base64 = appState.config.localImageBase64;
+      if (!base64) {
+        throw new Error('No local image uploaded yet. Upload an image in settings.');
+      }
+      appState.wallpapers = [{
+        title: appState.config.localImageName || 'Local File Wallpaper',
+        url: base64,
+        fallbackUrl: base64,
+        link: '#'
+      }];
+      updateStatus('ready', 'Active: Local Image File');
+      if (notify) showToast('Local image wallpaper applied');
     }
 
+    appState.currentIndex = 0;
     await displayWallpaper(0);
     startCycleTimer();
+
   } catch (err) {
-    console.warn('Pinterest RSS Error, falling back to curated wallpapers:', err);
-    updateStatus('error', err.message || 'Error fetching RSS');
+    console.warn('Wallpaper source error, falling back to curated wallpapers:', err);
+    updateStatus('error', err.message || 'Error loading wallpaper');
     
     if (notify) {
-      showToast(`Feed issue: ${err.message}. Using aesthetic fallbacks.`);
+      showToast(`${err.message}. Using aesthetic fallbacks.`);
     }
 
     appState.wallpapers = [...FALLBACK_WALLPAPERS];
@@ -507,17 +707,33 @@ async function loadFeedAndCycle(notify = false) {
   }
 }
 
-function shuffleArray(array) {
-  for (let i = array.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [array[i], array[j]] = [array[j], array[i]];
-  }
-  return array;
-}
+// =============================================================================
+// Settings Modal & Conditional Form UI
+// =============================================================================
 
-// =============================================================================
-// Settings Modal & UI Customization
-// =============================================================================
+function updateFormVisibility(mode) {
+  // Hide all conditional groups first
+  elements.groupPresets.classList.add('hidden');
+  elements.groupPinterestUser.classList.add('hidden');
+  elements.groupPinterestBoard.classList.add('hidden');
+  elements.groupDirectUrl.classList.add('hidden');
+  elements.groupLocalUpload.classList.add('hidden');
+  elements.groupInterval.classList.add('hidden');
+
+  if (mode === 'pinterest-board') {
+    elements.groupPresets.classList.remove('hidden');
+    elements.groupPinterestUser.classList.remove('hidden');
+    elements.groupPinterestBoard.classList.remove('hidden');
+    elements.groupInterval.classList.remove('hidden');
+  } else if (mode === 'pinterest-feed') {
+    elements.groupPinterestUser.classList.remove('hidden');
+    elements.groupInterval.classList.remove('hidden');
+  } else if (mode === 'direct-url') {
+    elements.groupDirectUrl.classList.remove('hidden');
+  } else if (mode === 'local-upload') {
+    elements.groupLocalUpload.classList.remove('hidden');
+  }
+}
 
 function applyVisualSettings() {
   const dim = appState.config.dim ?? 25;
@@ -544,13 +760,30 @@ function updateStatus(type, msg) {
 }
 
 function openSettingsModal() {
-  elements.inputUsername.value = appState.config.username;
-  elements.inputBoard.value = appState.config.board;
-  elements.inputInterval.value = appState.config.interval;
-  elements.inputTimeFormat.value = appState.config.timeFormat;
+  const mode = appState.config.sourceMode || 'pinterest-board';
+  elements.selectSourceMode.value = mode;
+  updateFormVisibility(mode);
+
+  elements.inputUsername.value = appState.config.username || 'pinterest';
+  elements.inputBoard.value = appState.config.board || 'wallpapers';
+  elements.inputDirectUrl.value = appState.config.directUrl || '';
+  elements.inputInterval.value = appState.config.interval || 30;
+  elements.inputTimeFormat.value = appState.config.timeFormat || '12h';
   elements.inputDim.value = appState.config.dim ?? 25;
   elements.inputBlur.value = appState.config.blur ?? 0;
   
+  // Local preview
+  if (appState.config.localImageBase64) {
+    elements.localPreviewImg.src = appState.config.localImageBase64;
+    elements.localPreviewName.textContent = appState.config.localImageName || 'Stored Image';
+    elements.localPreviewContainer.classList.remove('hidden');
+  } else {
+    elements.localPreviewContainer.classList.add('hidden');
+  }
+
+  appState.pendingLocalBase64 = null;
+  appState.pendingLocalName = null;
+
   applyVisualSettings();
   elements.settingsDialog.showModal();
 }
@@ -571,7 +804,37 @@ function showToast(message) {
 }
 
 // =============================================================================
-// Event Listeners & Initialization
+// File Upload Handler (FileReader -> Base64)
+// =============================================================================
+
+function handleLocalFileUpload(file) {
+  if (!file || !file.type.startsWith('image/')) {
+    showToast('Please select a valid image file (PNG, JPG, WebP).');
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const base64 = e.target.result;
+    appState.pendingLocalBase64 = base64;
+    appState.pendingLocalName = file.name;
+
+    elements.localPreviewImg.src = base64;
+    elements.localPreviewName.textContent = `${file.name} (${Math.round(file.size / 1024)} KB)`;
+    elements.localPreviewContainer.classList.remove('hidden');
+    elements.fileUploadText.textContent = `Selected: ${file.name}`;
+    showToast(`Loaded "${file.name}"`);
+  };
+
+  reader.onerror = () => {
+    showToast('Failed to read local image file.');
+  };
+
+  reader.readAsDataURL(file);
+}
+
+// =============================================================================
+// Event Listeners & Bootstrapping
 // =============================================================================
 
 function setupEventListeners() {
@@ -585,16 +848,64 @@ function setupEventListeners() {
   elements.closeModalBtn.addEventListener('click', closeSettingsModal);
   elements.cancelBtn.addEventListener('click', closeSettingsModal);
 
-  // Close dialog on clicking backdrop
+  // Close Settings dialog on clicking backdrop
   elements.settingsDialog.addEventListener('click', (e) => {
-    const dialogDimensions = elements.settingsDialog.getBoundingClientRect();
-    if (
-      e.clientX < dialogDimensions.left ||
-      e.clientX > dialogDimensions.right ||
-      e.clientY < dialogDimensions.top ||
-      e.clientY > dialogDimensions.bottom
-    ) {
+    const rect = elements.settingsDialog.getBoundingClientRect();
+    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
       closeSettingsModal();
+    }
+  });
+
+  // Add Shortcut Dialog Modal Open/Close
+  elements.closeAddShortcutBtn.addEventListener('click', closeAddShortcutModal);
+  elements.cancelAddShortcutBtn.addEventListener('click', closeAddShortcutModal);
+  elements.addShortcutDialog.addEventListener('click', (e) => {
+    const rect = elements.addShortcutDialog.getBoundingClientRect();
+    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+      closeAddShortcutModal();
+    }
+  });
+
+  // Add Shortcut Form Submit
+  elements.addShortcutForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const title = elements.inputShortcutTitle.value;
+    const url = elements.inputShortcutUrl.value;
+    if (url.trim()) {
+      await addShortcut(title, url);
+      closeAddShortcutModal();
+    }
+  });
+
+  // Source Mode Selector Change
+  elements.selectSourceMode.addEventListener('change', (e) => {
+    updateFormVisibility(e.target.value);
+  });
+
+  // Local File Upload Input & Drag-and-Drop
+  elements.inputLocalFile.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) {
+      handleLocalFileUpload(e.target.files[0]);
+    }
+  });
+
+  ['dragenter', 'dragover'].forEach(eventName => {
+    elements.fileDropzone.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      elements.fileDropzone.classList.add('dragover');
+    });
+  });
+
+  ['dragleave', 'drop'].forEach(eventName => {
+    elements.fileDropzone.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      elements.fileDropzone.classList.remove('dragover');
+    });
+  });
+
+  elements.fileDropzone.addEventListener('drop', (e) => {
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleLocalFileUpload(e.dataTransfer.files[0]);
     }
   });
 
@@ -628,34 +939,49 @@ function setupEventListeners() {
   elements.settingsForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     
+    const mode = elements.selectSourceMode.value;
     const newUsername = sanitizeString(elements.inputUsername.value) || 'pinterest';
     const newBoard = sanitizeString(elements.inputBoard.value) || 'wallpapers';
+    const newDirectUrl = elements.inputDirectUrl.value.trim();
     const newInterval = Math.max(5, parseInt(elements.inputInterval.value, 10) || 30);
     const newTimeFormat = elements.inputTimeFormat.value || '12h';
     const newDim = parseInt(elements.inputDim.value, 10) || 25;
     const newBlur = parseInt(elements.inputBlur.value, 10) || 0;
 
-    await saveConfig({
+    const updatedConfig = {
+      sourceMode: mode,
       username: newUsername,
       board: newBoard,
+      directUrl: newDirectUrl,
       interval: newInterval,
       timeFormat: newTimeFormat,
       dim: newDim,
       blur: newBlur
-    });
+    };
+
+    if (appState.pendingLocalBase64) {
+      updatedConfig.localImageBase64 = appState.pendingLocalBase64;
+      updatedConfig.localImageName = appState.pendingLocalName;
+    }
+
+    await saveConfig(updatedConfig);
 
     applyVisualSettings();
     updateClock();
     closeSettingsModal();
 
-    // Reload feed immediately with updated board
-    loadFeedAndCycle(true);
+    // Reload wallpaper stream immediately
+    loadWallpapersByMode(true);
   });
 
   // Reset Defaults Button
   elements.resetBtn.addEventListener('click', async () => {
+    elements.selectSourceMode.value = DEFAULT_CONFIG.sourceMode;
+    updateFormVisibility(DEFAULT_CONFIG.sourceMode);
+
     elements.inputUsername.value = DEFAULT_CONFIG.username;
     elements.inputBoard.value = DEFAULT_CONFIG.board;
+    elements.inputDirectUrl.value = DEFAULT_CONFIG.directUrl;
     elements.inputInterval.value = DEFAULT_CONFIG.interval;
     elements.inputTimeFormat.value = DEFAULT_CONFIG.timeFormat;
     elements.inputDim.value = DEFAULT_CONFIG.dim;
@@ -665,12 +991,14 @@ function setupEventListeners() {
     elements.blurVal.textContent = DEFAULT_CONFIG.blur;
 
     elements.presetChips.forEach(c => c.classList.remove('active'));
+    elements.localPreviewContainer.classList.add('hidden');
+    appState.pendingLocalBase64 = null;
+    appState.pendingLocalName = null;
   });
 
   // Keyboard Shortcuts (ArrowLeft = Prev, ArrowRight = Next, Space = Pause/Resume)
   window.addEventListener('keydown', (e) => {
-    // Ignore key shortcuts if modal is open or user is typing in input
-    if (elements.settingsDialog.open || ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+    if (elements.settingsDialog.open || elements.addShortcutDialog.open || ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
       return;
     }
 
@@ -700,14 +1028,15 @@ function setupEventListeners() {
 
 async function initApp() {
   appState.config = await loadConfig();
-  
+  appState.userShortcuts = await loadUserShortcuts();
+
   applyVisualSettings();
   initClock();
-  initShortcuts();
+  renderShortcuts();
   setupEventListeners();
 
-  // Load Pinterest wallpapers & begin cycling
-  loadFeedAndCycle(false);
+  // Load active wallpaper stream & cycle
+  loadWallpapersByMode(false);
 }
 
 // Start on DOM Ready
