@@ -55,17 +55,18 @@ const FALLBACK_WALLPAPERS = [
 let appState = {
   config: { ...DEFAULT_CONFIG },
   userShortcuts: [],
-  wallpaperQueue: [],       // Lightweight queue of wallpaper metadata
-  wallpapers: [],           // Active streaming rotation array
-  seenUrls: new Set(),      // De-duplication set for continuous batching
-  rotations: {},            // Persistent image URL -> degrees rotation mapping
-  paginationBookmark: null, // Cursor bookmark for Pinterest pagination
+  wallpaperQueue: [],          // Lightweight queue of wallpaper metadata
+  wallpapers: [],              // Active streaming rotation array
+  seenUrls: new Set(),         // De-duplication set for continuous batching
+  rotations: {},               // Merged image URL / ID -> degrees rotation mapping
+  userImageRotations: {},      // Persistent user_image_rotations store
+  paginationBookmark: null,    // Cursor bookmark for Pinterest pagination
   isFetchingNextBatch: false,
   currentIndex: 0,
-  activeLayer: 1,           // 1 for #bg-1, 2 for #bg-2
+  activeLayer: 1,              // 1 for #bg-1, 2 for #bg-2
   cycleTimer: null,
   preloadTimer: null,
-  preloadedCache: new Map(), // In-memory image objects cache (current + next only)
+  preloadedCache: new Map(),   // In-memory image objects cache (current + next only)
   isPaused: false,
   isLoadingFeed: false,
   pendingLocalBase64: null,
@@ -149,22 +150,35 @@ const elements = {
 // =============================================================================
 
 /**
+ * Retrieves saved custom rotation angle for a wallpaper if present in user_image_rotations store
+ */
+function getSavedRotation(wallpaper) {
+  if (!wallpaper) return undefined;
+  const store = appState.userImageRotations || appState.rotations || {};
+  if (wallpaper.url && store[wallpaper.url] !== undefined) return store[wallpaper.url];
+  if (wallpaper.fallbackUrl && store[wallpaper.fallbackUrl] !== undefined) return store[wallpaper.fallbackUrl];
+  if (wallpaper.id && store[wallpaper.id] !== undefined) return store[wallpaper.id];
+  return undefined;
+}
+
+/**
  * Synchronously renders the last active or next upcoming wallpaper from local cache for 0ms cold-start
  */
 function applyColdStartWallpaper() {
   try {
     const raw = localStorage.getItem('next_cold_start_wallpaper') || localStorage.getItem('last_active_wallpaper');
-    const rotRaw = localStorage.getItem('wallpaper_rotations');
-    const rotations = rotRaw ? JSON.parse(rotRaw) : {};
-    if (rotations) {
-      appState.rotations = { ...appState.rotations, ...rotations };
-    }
+    const rawUser = localStorage.getItem('user_image_rotations');
+    const rawLegacy = localStorage.getItem('wallpaper_rotations');
+    const userMap = rawUser ? JSON.parse(rawUser) : {};
+    const legacyMap = rawLegacy ? JSON.parse(rawLegacy) : {};
+    appState.userImageRotations = { ...legacyMap, ...userMap };
+    appState.rotations = { ...appState.userImageRotations };
 
     if (raw) {
       const cached = JSON.parse(raw);
       if (cached && cached.url) {
-        const savedRot = (appState.rotations && appState.rotations[cached.url] !== undefined)
-          ? appState.rotations[cached.url]
+        const savedRot = getSavedRotation(cached) !== undefined
+          ? getSavedRotation(cached)
           : (cached.rotation || 0);
 
         if (elements.bg1) {
@@ -186,9 +200,12 @@ function applyColdStartWallpaper() {
   } catch (e) {}
 
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['next_cold_start_wallpaper', 'last_active_wallpaper', 'wallpaper_rotations'], (res) => {
-      if (res && res.wallpaper_rotations) {
-        appState.rotations = { ...appState.rotations, ...res.wallpaper_rotations };
+    chrome.storage.local.get(['next_cold_start_wallpaper', 'last_active_wallpaper', 'user_image_rotations', 'wallpaper_rotations'], (res) => {
+      if (res) {
+        const userMap = res.user_image_rotations || {};
+        const legacyMap = res.wallpaper_rotations || {};
+        appState.userImageRotations = { ...appState.userImageRotations, ...legacyMap, ...userMap };
+        appState.rotations = { ...appState.userImageRotations };
       }
       const cached = res ? (res.next_cold_start_wallpaper || res.last_active_wallpaper) : null;
       if (cached && cached.url) {
@@ -196,8 +213,8 @@ function applyColdStartWallpaper() {
           localStorage.setItem('next_cold_start_wallpaper', JSON.stringify(cached));
         } catch (e) {}
 
-        const savedRot = (appState.rotations && appState.rotations[cached.url] !== undefined)
-          ? appState.rotations[cached.url]
+        const savedRot = getSavedRotation(cached) !== undefined
+          ? getSavedRotation(cached)
           : (cached.rotation || 0);
 
         if (elements.bg1 && !elements.bg1.style.backgroundImage) {
@@ -219,11 +236,12 @@ function applyColdStartWallpaper() {
  */
 function saveActiveWallpaperToColdStart(wallpaper) {
   if (!wallpaper || !wallpaper.url) return;
-  const rotation = (appState.rotations && appState.rotations[wallpaper.url] !== undefined)
-    ? appState.rotations[wallpaper.url]
+  const rotation = getSavedRotation(wallpaper) !== undefined
+    ? getSavedRotation(wallpaper)
     : (wallpaper.rotation || 0);
 
   const payload = {
+    id: wallpaper.id || null,
     title: wallpaper.title || 'Wallpaper',
     url: wallpaper.url,
     fallbackUrl: wallpaper.fallbackUrl || wallpaper.url,
@@ -245,11 +263,12 @@ function saveActiveWallpaperToColdStart(wallpaper) {
  */
 function saveNextColdStartWallpaper(wallpaper) {
   if (!wallpaper || !wallpaper.url) return;
-  const rotation = (appState.rotations && appState.rotations[wallpaper.url] !== undefined)
-    ? appState.rotations[wallpaper.url]
+  const rotation = getSavedRotation(wallpaper) !== undefined
+    ? getSavedRotation(wallpaper)
     : (wallpaper.rotation || 0);
 
   const payload = {
+    id: wallpaper.id || null,
     title: wallpaper.title || 'Wallpaper',
     url: wallpaper.url,
     fallbackUrl: wallpaper.fallbackUrl || wallpaper.url,
@@ -267,16 +286,36 @@ function saveNextColdStartWallpaper(wallpaper) {
 }
 
 /**
- * Persists orientation angle mapped to a specific image URL
+ * Persists custom rotation angle mapped to a specific image URL or ID in permanent store
  */
-function saveRotationForUrl(url, degrees) {
-  if (!url) return;
-  appState.rotations[url] = degrees;
+function saveRotationForUrl(url, degrees, wallpaper = null) {
+  if (!url && (!wallpaper || !wallpaper.url)) return;
+  const targetUrl = url || wallpaper.url;
+
+  appState.rotations[targetUrl] = degrees;
+  appState.userImageRotations[targetUrl] = degrees;
+
+  if (wallpaper) {
+    if (wallpaper.fallbackUrl) {
+      appState.rotations[wallpaper.fallbackUrl] = degrees;
+      appState.userImageRotations[wallpaper.fallbackUrl] = degrees;
+    }
+    if (wallpaper.id) {
+      appState.rotations[wallpaper.id] = degrees;
+      appState.userImageRotations[wallpaper.id] = degrees;
+    }
+  }
+
   try {
+    localStorage.setItem('user_image_rotations', JSON.stringify(appState.userImageRotations));
     localStorage.setItem('wallpaper_rotations', JSON.stringify(appState.rotations));
   } catch (e) {}
+
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.set({ wallpaper_rotations: appState.rotations });
+    chrome.storage.local.set({
+      user_image_rotations: appState.userImageRotations,
+      wallpaper_rotations: appState.rotations
+    });
   }
 }
 
@@ -285,16 +324,21 @@ function saveRotationForUrl(url, degrees) {
  */
 function loadRotations() {
   try {
-    const raw = localStorage.getItem('wallpaper_rotations');
-    if (raw) {
-      appState.rotations = { ...appState.rotations, ...(JSON.parse(raw) || {}) };
-    }
+    const rawUser = localStorage.getItem('user_image_rotations');
+    const rawLegacy = localStorage.getItem('wallpaper_rotations');
+    const userMap = rawUser ? JSON.parse(rawUser) : {};
+    const legacyMap = rawLegacy ? JSON.parse(rawLegacy) : {};
+    appState.userImageRotations = { ...legacyMap, ...userMap };
+    appState.rotations = { ...appState.userImageRotations };
   } catch (e) {}
 
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['wallpaper_rotations'], (res) => {
-      if (res && res.wallpaper_rotations) {
-        appState.rotations = { ...appState.rotations, ...res.wallpaper_rotations };
+    chrome.storage.local.get(['user_image_rotations', 'wallpaper_rotations'], (res) => {
+      if (res) {
+        const userMap = res.user_image_rotations || {};
+        const legacyMap = res.wallpaper_rotations || {};
+        appState.userImageRotations = { ...appState.userImageRotations, ...legacyMap, ...userMap };
+        appState.rotations = { ...appState.userImageRotations };
       }
     });
   }
@@ -1268,20 +1312,63 @@ async function fetchBoardPinsBatch(username, boardString, bookmark = null) {
 }
 
 /**
+ * Fetches 1 page/batch of algorithmic recommended pins from the user's logged-in Home Feed (in.pinterest.com)
+ */
+async function fetchPinterestHomefeedBatch(bookmark = null) {
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    try {
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ 
+          type: 'FETCH_PINTEREST_HOMEFEED_PAGE', 
+          bookmark: bookmark 
+        }, (res) => {
+          if (chrome.runtime.lastError) {
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(res || { success: false, error: 'No response from worker' });
+          }
+        });
+      });
+
+      if (response && response.success && response.data) {
+        return response.data; // { pins: [...], bookmark: '...', end: false }
+      }
+
+      if (response && response.error && response.error.includes('NOT_LOGGED_IN')) {
+        throw new Error('Please log in to Pinterest (in.pinterest.com) in your browser to view your personalized home feed.');
+      }
+      if (response && response.error) {
+        throw new Error(response.error);
+      }
+    } catch (e) {
+      if (e.message && e.message.includes('log in to Pinterest')) {
+        throw e;
+      }
+      console.warn('fetchPinterestHomefeedBatch error:', e);
+      throw e;
+    }
+  }
+
+  throw new Error('Please log in to Pinterest (in.pinterest.com) in your browser to load your personalized home feed.');
+}
+
+/**
  * Automatically triggers background fetch for the next page of pins
  * when fewer than 6 unviewed images remain in the active queue (unified across all Pinterest modes)
  */
 async function fetchNextBatch() {
   if (appState.isFetchingNextBatch || appState.isLoadingFeed) return;
   const mode = appState.config.sourceMode;
-  if (!['pinterest-search', 'pinterest-both', 'pinterest-saved', 'pinterest-feed', 'pinterest-board'].includes(mode)) return;
+  if (!['pinterest-homefeed', 'pinterest-search', 'pinterest-both', 'pinterest-saved', 'pinterest-feed', 'pinterest-board'].includes(mode)) return;
 
   appState.isFetchingNextBatch = true;
   try {
     let result = null;
     const user = sanitizeHandle(appState.config.username) || 'pinterest';
 
-    if (mode === 'pinterest-search') {
+    if (mode === 'pinterest-homefeed') {
+      result = await fetchPinterestHomefeedBatch(appState.paginationBookmark);
+    } else if (mode === 'pinterest-search') {
       const query = appState.config.searchQuery || '4k dark cyberpunk wallpaper';
       result = await fetchPinterestSearchBatch(query, appState.paginationBookmark);
     } else if (mode === 'pinterest-saved') {
@@ -1345,23 +1432,20 @@ function setLayerRotation(el, rotation) {
 }
 
 /**
- * Manually rotates the currently active wallpaper clockwise by 90°
+ * Manually rotates the currently active wallpaper clockwise by 90° and persists in user_image_rotations
  */
 function rotateActiveWallpaper() {
   if (appState.wallpapers.length === 0) return;
   const currentItem = appState.wallpapers[appState.currentIndex];
   if (!currentItem) return;
 
-  const currentRot = currentItem.rotation || 0;
+  const currentRot = (getSavedRotation(currentItem) !== undefined) ? getSavedRotation(currentItem) : (currentItem.rotation || 0);
   const nextRot = (currentRot + 90) % 360;
   currentItem.manualRotation = nextRot;
   currentItem.rotation = nextRot;
 
-  // Persist rotation mapped to this specific image URL
-  saveRotationForUrl(currentItem.url, nextRot);
-  if (currentItem.fallbackUrl) {
-    saveRotationForUrl(currentItem.fallbackUrl, nextRot);
-  }
+  // Persist rotation mapped to this specific image in user_image_rotations permanent store
+  saveRotationForUrl(currentItem.url, nextRot, currentItem);
 
   const activeLayerEl = appState.activeLayer === 1 ? elements.bg1 : elements.bg2;
   setLayerRotation(activeLayerEl, nextRot);
@@ -1381,10 +1465,8 @@ function preloadImage(wallpaper) {
     return Promise.resolve({ success: false });
   }
 
-  // Priority 1: Check persistent rotation mapping for this specific URL
-  const savedRot = appState.rotations[wallpaper.url] !== undefined 
-    ? appState.rotations[wallpaper.url] 
-    : (wallpaper.fallbackUrl ? appState.rotations[wallpaper.fallbackUrl] : undefined);
+  // Priority 1: Check persistent custom rotation mapping (user_image_rotations)
+  const savedRot = getSavedRotation(wallpaper);
 
   if (appState.preloadedCache.has(wallpaper.url)) {
     const cachedImg = appState.preloadedCache.get(wallpaper.url);
@@ -1520,10 +1602,9 @@ async function displayWallpaper(index, manual = false) {
   const activeLayerEl = appState.activeLayer === 1 ? elements.bg1 : elements.bg2;
   const nextLayerEl = nextLayerNum === 1 ? elements.bg1 : elements.bg2;
 
-  // Check persistent rotation map
-  const rotation = (appState.rotations && appState.rotations[currentItem.url] !== undefined)
-    ? appState.rotations[currentItem.url]
-    : (currentItem.rotation || 0);
+  // Check persistent rotation map (user_image_rotations store)
+  const savedRot = getSavedRotation(currentItem);
+  const rotation = savedRot !== undefined ? savedRot : (currentItem.rotation || 0);
   currentItem.rotation = rotation;
 
   // 1. Prepare inactive layer instantaneously while hidden (opacity 0)
@@ -1588,7 +1669,9 @@ function updateActiveStatusLabel() {
   const current = total > 0 ? (appState.currentIndex + 1) : 0;
 
   let modeName = 'Pinterest';
-  if (mode === 'pinterest-search') {
+  if (mode === 'pinterest-homefeed') {
+    modeName = 'Personalized Home Feed (in.pinterest.com)';
+  } else if (mode === 'pinterest-search') {
     modeName = `Search: "${appState.config.searchQuery || 'aesthetic'}"`;
   } else if (mode === 'pinterest-both') {
     modeName = `@${sanitizeHandle(appState.config.username) || 'pinterest'} (Saved + Feed)`;
@@ -1689,7 +1772,27 @@ async function loadWallpapersByMode(notify = false) {
   const user = sanitizeHandle(appState.config.username) || 'pinterest';
 
   try {
-    if (mode === 'pinterest-search') {
+    if (mode === 'pinterest-homefeed') {
+      updateStatus('loading', 'Fetching personalized home feed recommendations from in.pinterest.com...');
+      
+      const batch = await fetchPinterestHomefeedBatch(null);
+      const pins = batch.pins || [];
+
+      if (pins.length === 0) {
+        throw new Error('No wallpapers found in home feed. Please log in to in.pinterest.com in your browser.');
+      }
+
+      appState.seenUrls.clear();
+      pins.forEach(p => appState.seenUrls.add(p.url));
+      appState.wallpaperQueue = [...pins];
+      appState.wallpapers = shuffleArray([...pins]);
+      appState.paginationBookmark = batch.bookmark || null;
+
+      saveQueueToStorage();
+      updateActiveStatusLabel();
+      if (notify) showToast(`Loaded ${pins.length} personalized wallpapers from Home Feed`);
+
+    } else if (mode === 'pinterest-search') {
       const query = (appState.config.searchQuery || '4k dark cyberpunk wallpaper').trim();
       updateStatus('loading', `Searching Pinterest for "${query}"...`);
       
@@ -1853,7 +1956,9 @@ function updateFormVisibility(mode) {
   elements.groupLocalUpload.classList.add('hidden');
   elements.groupInterval.classList.add('hidden');
 
-  if (mode === 'pinterest-search') {
+  if (mode === 'pinterest-homefeed') {
+    elements.groupInterval.classList.remove('hidden');
+  } else if (mode === 'pinterest-search') {
     if (elements.groupPinterestSearch) elements.groupPinterestSearch.classList.remove('hidden');
     elements.groupInterval.classList.remove('hidden');
   } else if (mode === 'pinterest-both' || mode === 'pinterest-saved' || mode === 'pinterest-feed') {
@@ -2225,7 +2330,25 @@ function setupStorageSyncListener() {
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== 'local') return;
 
-      if (changes.wallpaper_rotations && changes.wallpaper_rotations.newValue) {
+      if (changes.user_image_rotations && changes.user_image_rotations.newValue) {
+        appState.userImageRotations = { ...appState.userImageRotations, ...changes.user_image_rotations.newValue };
+        appState.rotations = { ...appState.rotations, ...appState.userImageRotations };
+
+        // If currently displayed wallpaper's rotation changed in another tab, update active layer immediately
+        if (appState.wallpapers.length > 0 && appState.currentIndex >= 0 && appState.currentIndex < appState.wallpapers.length) {
+          const currentItem = appState.wallpapers[appState.currentIndex];
+          const newRot = getSavedRotation(currentItem);
+          if (newRot !== undefined && newRot !== currentItem.rotation) {
+            currentItem.rotation = newRot;
+            currentItem.manualRotation = newRot;
+            const activeLayerEl = appState.activeLayer === 1 ? elements.bg1 : elements.bg2;
+            setLayerRotation(activeLayerEl, newRot);
+            if (elements.bgAmbient) {
+              setLayerRotation(elements.bgAmbient, newRot);
+            }
+          }
+        }
+      } else if (changes.wallpaper_rotations && changes.wallpaper_rotations.newValue) {
         appState.rotations = { ...appState.rotations, ...changes.wallpaper_rotations.newValue };
       }
 
@@ -2274,14 +2397,18 @@ async function initApp() {
       'wallpaper_global_queue',
       'wallpaper_queue_index',
       'pagination_bookmark',
+      'user_image_rotations',
       'wallpaper_rotations',
       'active_source_mode',
       'active_search_query',
       'active_username',
       'active_board'
     ], async (res) => {
-      if (res && res.wallpaper_rotations) {
-        appState.rotations = { ...appState.rotations, ...res.wallpaper_rotations };
+      if (res) {
+        const userMap = res.user_image_rotations || {};
+        const legacyMap = res.wallpaper_rotations || {};
+        appState.userImageRotations = { ...appState.userImageRotations, ...legacyMap, ...userMap };
+        appState.rotations = { ...appState.userImageRotations };
       }
 
       const isConfigMatch = res &&
@@ -2289,7 +2416,7 @@ async function initApp() {
         res.wallpaper_global_queue.length > 0 &&
         res.active_source_mode === appState.config.sourceMode &&
         (appState.config.sourceMode !== 'pinterest-search' || res.active_search_query === appState.config.searchQuery) &&
-        (appState.config.sourceMode === 'pinterest-search' || res.active_username === appState.config.username) &&
+        (appState.config.sourceMode === 'pinterest-search' || appState.config.sourceMode === 'pinterest-homefeed' || res.active_username === appState.config.username) &&
         (appState.config.sourceMode !== 'pinterest-board' || res.active_board === appState.config.board);
 
       if (isConfigMatch) {

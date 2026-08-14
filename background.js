@@ -73,6 +73,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Single-page User Homefeed Pagination (Authenticated session)
+  if (message.type === 'FETCH_PINTEREST_HOMEFEED_PAGE') {
+    fetchHomefeedSinglePage(message.bookmark || null)
+      .then((result) => {
+        sendResponse({
+          success: true,
+          data: result
+        });
+      })
+      .catch((err) => {
+        sendResponse({
+          success: false,
+          error: err.message || 'Failed to fetch Pinterest Home Feed'
+        });
+      });
+
+    return true;
+  }
+
   if (message.type === 'FETCH_ALL_USER_PINS' && message.username) {
     fetchAllUserPins(message.username, message.maxPages || 12)
       .then((pins) => {
@@ -248,6 +267,103 @@ async function fetchUserPinsSinglePage(username, bookmark = null) {
     bookmark: nextBookmark,
     end: isEnd
   };
+}
+
+/**
+ * Fetches a single page of algorithmic recommended pins from the user's logged-in Home Feed
+ */
+async function fetchHomefeedSinglePage(bookmark = null) {
+  const domains = ['https://in.pinterest.com', 'https://www.pinterest.com'];
+  let lastError = null;
+
+  for (const domain of domains) {
+    try {
+      const homeRes = await fetch(`${domain}/`, {
+        credentials: 'include',
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+        }
+      });
+
+      const cookies = homeRes.headers.get('set-cookie') || '';
+      const csrfMatch = cookies.match(/csrftoken=([^;]+)/);
+      const csrf = csrfMatch ? csrfMatch[1] : '';
+
+      const headers = {
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRFToken': csrf,
+        'X-Pinterest-AppState': 'active',
+        'X-Pinterest-PWS-Handler': 'www/index',
+        'Cookie': cookies,
+        'Accept': 'application/json, text/javascript, */*, q=0.01',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+      };
+
+      const options = {
+        field_set_key: 'grid_item'
+      };
+      if (bookmark && bookmark !== '-end-') {
+        options.bookmarks = [bookmark];
+      }
+
+      const data = JSON.stringify({ options, context: {} });
+      const apiRes = await fetch(`${domain}/resource/UserHomefeedResource/get/?data=` + encodeURIComponent(data), {
+        credentials: 'include',
+        headers
+      });
+
+      if (apiRes.status === 401 || apiRes.status === 403) {
+        throw new Error('NOT_LOGGED_IN: Please log in to Pinterest (in.pinterest.com) in your browser.');
+      }
+
+      if (!apiRes.ok) {
+        throw new Error(`Homefeed API HTTP ${apiRes.status}`);
+      }
+
+      const apiJson = await apiRes.json().catch(() => null);
+      const rawData = apiJson?.resource_response?.data || [];
+      const results = Array.isArray(rawData) ? rawData : (rawData.results || []);
+      const nextBookmark = apiJson?.resource_response?.bookmark || null;
+      const isEnd = !nextBookmark || nextBookmark === '-end-';
+
+      const pins = [];
+      const seen = new Set();
+
+      results.forEach(item => {
+        const orig = item.images?.orig?.url || item.images?.['736x']?.url || item.images?.['474x']?.url;
+        const fallback = item.images?.['736x']?.url || orig;
+        const title = (item.title || item.grid_title || item.description || 'Personalized Home Feed Wallpaper').trim();
+        const link = item.id ? `https://www.pinterest.com/pin/${item.id}/` : `https://in.pinterest.com/`;
+
+        if (orig && !seen.has(orig)) {
+          seen.add(orig);
+          pins.push({
+            id: item.id || null,
+            title,
+            url: orig,
+            fallbackUrl: fallback,
+            link
+          });
+        }
+      });
+
+      if (pins.length > 0) {
+        return {
+          pins,
+          bookmark: nextBookmark,
+          end: isEnd
+        };
+      }
+    } catch (e) {
+      lastError = e;
+      if (e.message && e.message.startsWith('NOT_LOGGED_IN')) {
+        throw e;
+      }
+    }
+  }
+
+  throw lastError || new Error('Failed to fetch home feed pins.');
 }
 
 /**
