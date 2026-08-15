@@ -3,17 +3,17 @@
    ========================================================================== */
 
 :root {
-  --font-primary: 'Outfit', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-body: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-primary: 'Inter', system-ui, -apple-system, 'SF Pro Display', BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   
   /* Glassmorphic Surfaces & Theme */
   --bg-dark-base: #0a0b10;
-  --glass-bg: rgba(18, 20, 29, 0.45);
-  --glass-bg-hover: rgba(255, 255, 255, 0.12);
-  --glass-bg-active: rgba(255, 255, 255, 0.18);
-  --glass-border: rgba(255, 255, 255, 0.14);
-  --glass-border-focus: rgba(230, 0, 35, 0.6);
-  --glass-modal-bg: rgba(14, 16, 24, 0.88);
+  --glass-bg: rgba(255, 255, 255, 0.08);
+  --glass-bg-hover: rgba(255, 255, 255, 0.16);
+  --glass-bg-active: rgba(255, 255, 255, 0.22);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-border-focus: rgba(255, 255, 255, 0.35);
+  --glass-modal-bg: rgba(14, 16, 24, 0.92);
   
   /* Brand & Accents */
   --pinterest-red: #e60023;
@@ -23,16 +23,17 @@
   
   /* Text Colors */
   --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.75);
-  --text-muted: rgba(255, 255, 255, 0.48);
+  --text-secondary: rgba(255, 255, 255, 0.85);
+  --text-muted: rgba(255, 255, 255, 0.55);
   
   /* Shadows & Blurs */
-  --glass-blur: 24px;
-  --glass-shadow: 0 16px 40px rgba(0, 0, 0, 0.4), 0 1px 1px rgba(255, 255, 255, 0.1) inset;
-  --text-shadow-hero: 0 4px 28px rgba(0, 0, 0, 0.65), 0 1px 2px rgba(0, 0, 0, 0.8);
-  --text-shadow-sub: 0 2px 14px rgba(0, 0, 0, 0.7);
+  --glass-blur: 12px;
+  --glass-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 1px 1px rgba(255, 255, 255, 0.1) inset;
+  --text-shadow-hero: 0 2px 14px rgba(0, 0, 0, 0.7), 0 1px 2px rgba(0, 0, 0, 0.85);
+  --text-shadow-sub: 0 2px 10px rgba(0, 0, 0, 0.65);
   
-  /* Dynamics */
+  /* Dynamics & Scaling */
+  --ui-scale: 1;
   --dim-overlay: rgba(0, 0, 0, 0.25);
   --bg-blur-amount: 0px;
   --transition-smooth: cubic-bezier(0.16, 1, 0.3, 1);
@@ -125,12 +126,14 @@ body.fit-auto .bg-ambient-layer {
   background-position: center center !important;
   background-repeat: no-repeat !important;
   filter: blur(var(--bg-blur-amount));
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) translateZ(0);
   opacity: 0;
   z-index: 1;
   pointer-events: none;
   transition: opacity 1.2s var(--transition-crossfade);
   will-change: opacity;
+  image-rendering: -webkit-optimize-contrast;
+  backface-visibility: hidden;
 }
 
 body.fit-cover .bg-layer {
@@ -149,25 +152,25 @@ body.fit-auto .bg-layer {
 .bg-layer.rotate-0 {
   width: 100vw;
   height: 100vh;
-  transform: translate(-50%, -50%) rotate(0deg);
+  transform: translate(-50%, -50%) rotate(0deg) translateZ(0);
 }
 
 .bg-layer.rotate-90 {
   width: 100vh;
   height: 100vw;
-  transform: translate(-50%, -50%) rotate(90deg);
+  transform: translate(-50%, -50%) rotate(90deg) translateZ(0);
 }
 
 .bg-layer.rotate-180 {
   width: 100vw;
   height: 100vh;
-  transform: translate(-50%, -50%) rotate(180deg);
+  transform: translate(-50%, -50%) rotate(180deg) translateZ(0);
 }
 
 .bg-layer.rotate-270 {
   width: 100vh;
   height: 100vw;
-  transform: translate(-50%, -50%) rotate(270deg);
+  transform: translate(-50%, -50%) rotate(270deg) translateZ(0);
 }
 
 .bg-layer.active {
@@ -204,43 +207,54 @@ body.fit-auto .bg-layer {
 }
 
 /* ==========================================================================
-   Main Application Layout
+   Main Application Layout (Quadrant Architecture)
    ========================================================================== */
 
 .app-container {
-  position: relative;
-  z-index: 3;
+  position: fixed;
+  inset: 0;
   width: 100vw;
   height: 100vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 1.75rem 2.5rem 2rem 2.5rem;
-  max-width: 1600px;
-  margin: 0 auto;
+  z-index: 10;
+  pointer-events: none;
+  overflow: hidden;
 }
 
 /* ==========================================================================
-   Top Bar Navigation & Controls
+   1. Top-Right Control Bar & Source Attribution Container
    ========================================================================== */
 
-.top-bar {
+.top-right-container {
+  position: fixed;
+  top: 1.5rem;
+  right: 2rem;
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.6rem;
+  z-index: 50;
+  pointer-events: auto;
+  transform: scale(var(--ui-scale, 1));
+  transform-origin: top right;
+  transition: transform 0.15s ease-out;
+}
+
+.top-right-controls {
+  display: flex;
+  gap: 0.75rem;
   align-items: center;
-  width: 100%;
 }
 
 .wallpaper-info {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: flex-end;
 }
 
 .pin-link {
   display: inline-flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.55rem;
   padding: 0.45rem 0.95rem;
   font-size: 0.82rem;
   font-weight: 500;
@@ -249,22 +263,25 @@ body.fit-auto .bg-layer {
   border-radius: 9999px;
   background: var(--glass-bg);
   backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
   border: 1px solid var(--glass-border);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  text-shadow: var(--text-shadow-sub);
   transition: all 0.25s var(--transition-smooth);
-  max-width: 340px;
+  max-width: 280px;
 }
 
 .pin-link:hover {
   color: var(--text-primary);
   background: var(--glass-bg-hover);
-  border-color: rgba(255, 255, 255, 0.25);
-  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.28);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .pin-link .icon {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   fill: var(--pinterest-red);
   flex-shrink: 0;
 }
@@ -275,12 +292,6 @@ body.fit-auto .bg-layer {
   text-overflow: ellipsis;
 }
 
-.top-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
-
 /* Generic Glass Buttons */
 .glass-btn {
   display: inline-flex;
@@ -289,6 +300,7 @@ body.fit-auto .bg-layer {
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
   backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
   color: var(--text-secondary);
   border-radius: 12px;
   cursor: pointer;
@@ -313,15 +325,15 @@ body.fit-auto .bg-layer {
 }
 
 .icon-btn {
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   padding: 0;
 }
 
 .icon-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 19px;
+  height: 19px;
   transition: transform 0.25s ease;
 }
 
@@ -329,73 +341,60 @@ body.fit-auto .bg-layer {
   transform: scale(1.08);
 }
 
+#rotate-btn:hover svg {
+  transform: rotate(90deg);
+}
+
 #settings-btn:hover svg {
   transform: rotate(45deg);
 }
 
 /* ==========================================================================
-   Center Hero: Clock & Search
+   2. Top-Center Search Bar
    ========================================================================== */
 
-.center-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  margin-top: -3vh;
+.search-container {
+  position: fixed;
+  top: 2rem;
+  left: 50%;
+  transform: translateX(-50%) scale(var(--ui-scale, 1));
+  transform-origin: top center;
+  width: 100%;
+  max-width: 480px;
+  z-index: 50;
+  pointer-events: auto;
+  padding: 0 1rem;
+  transition: transform 0.15s ease-out;
 }
 
-.clock-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-bottom: 2rem;
-}
-
-.time-display {
-  font-family: var(--font-primary);
-  font-size: clamp(4.5rem, 9.5vw, 7.5rem);
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: -0.04em;
-  color: var(--text-primary);
-  text-shadow: var(--text-shadow-hero);
-}
-
-.date-display {
-  font-size: clamp(1rem, 2vw, 1.35rem);
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  color: var(--text-secondary);
-  text-shadow: var(--text-shadow-sub);
-  margin-top: 0.6rem;
-}
-
-/* Quick Search Bar */
 .search-form {
   width: 100%;
-  max-width: 540px;
 }
 
 .search-bar {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.7rem 1.25rem;
+  padding: 0.65rem 1.25rem;
   border-radius: 9999px;
-  background: rgba(18, 20, 30, 0.4);
-  backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  transition: all 0.3s var(--transition-smooth);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  transition: all 0.25s var(--transition-smooth);
+}
+
+.search-bar:hover {
+  background: var(--glass-bg-hover);
+  border-color: rgba(255, 255, 255, 0.22);
 }
 
 .search-bar:focus-within {
-  background: rgba(18, 20, 30, 0.65);
+  background: rgba(16, 18, 26, 0.65);
   border-color: rgba(255, 255, 255, 0.35);
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 2px rgba(255, 255, 255, 0.1);
-  transform: translateY(-2px);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
 }
 
 .search-icon {
@@ -413,6 +412,9 @@ body.fit-auto .bg-layer {
   color: var(--text-primary);
   font-family: inherit;
   font-size: 0.95rem;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-shadow: var(--text-shadow-sub);
 }
 
 .search-bar input::placeholder {
@@ -420,73 +422,72 @@ body.fit-auto .bg-layer {
 }
 
 /* ==========================================================================
-   Bottom Dock: Editable Shortcuts
+   3. Left-Aligned Vertical Shortcuts Dock
    ========================================================================== */
 
-.bottom-dock {
+.left-dock {
+  position: fixed;
+  left: 2rem;
+  top: 50%;
+  transform: translateY(-50%) scale(var(--ui-scale, 1));
+  transform-origin: left center;
   display: flex;
-  justify-content: center;
-  width: 100%;
+  flex-direction: column;
+  gap: 1rem;
+  z-index: 40;
+  pointer-events: auto;
+  overflow: visible;
+  padding: 1.5rem 2rem 1.5rem 0.5rem;
+  transition: transform 0.15s ease-out;
 }
 
-.shortcuts-container {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 1.1rem;
-  padding: 0.85rem 1.4rem;
-  border-radius: 24px;
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow);
-  max-width: 94vw;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.shortcuts-container::-webkit-scrollbar {
-  display: none;
-}
-
-/* Individual Shortcut Tile */
-.shortcut-card {
-  position: relative;
+.shortcuts-vertical-container {
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 0.9rem;
+  overflow: visible;
+}
+
+/* Circular Glassmorphic Shortcut Tile */
+.shortcut-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   text-decoration: none;
-  gap: 0.5rem;
-  width: 74px;
-  padding: 0.5rem 0.25rem;
-  border-radius: 16px;
+  cursor: pointer;
+  overflow: visible;
   transition: all 0.25s var(--transition-smooth);
 }
 
 .shortcut-card:hover {
   background: var(--glass-bg-hover);
-  transform: translateY(-4px);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1) translateX(4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.shortcut-card:active {
+  transform: scale(0.98) translateX(1px);
 }
 
 .shortcut-icon-box {
-  width: 46px;
-  height: 46px;
-  border-radius: 14px;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  border-radius: 50%;
   overflow: hidden;
-  transition: all 0.25s var(--transition-smooth);
-}
-
-.shortcut-card:hover .shortcut-icon-box {
-  background: rgba(255, 255, 255, 0.18);
-  border-color: rgba(255, 255, 255, 0.3);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
-  transform: scale(1.06);
 }
 
 .shortcut-icon-img {
@@ -494,56 +495,43 @@ body.fit-auto .bg-layer {
   height: 24px;
   object-fit: contain;
   border-radius: 4px;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.3));
 }
 
 .shortcut-letter-avatar {
   font-family: var(--font-primary);
-  font-size: 1.15rem;
+  font-size: 1.1rem;
   font-weight: 700;
   color: var(--text-primary);
   text-transform: uppercase;
-}
-
-.shortcut-title {
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  text-align: center;
-  width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   text-shadow: var(--text-shadow-sub);
 }
 
-.shortcut-card:hover .shortcut-title {
-  color: var(--text-primary);
-}
-
-/* Delete Button on Shortcut Tile */
+/* Delete Button on Circular Shortcut Tile */
 .shortcut-delete-btn {
   position: absolute;
-  top: -2px;
-  right: 4px;
+  top: -4px;
+  right: -4px;
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: rgba(20, 22, 32, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  color: var(--text-muted);
+  background: rgba(20, 22, 32, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.85);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   opacity: 0;
-  transform: scale(0.8);
-  transition: all 0.2s ease;
-  z-index: 5;
+  transform: scale(0.7);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 25;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 .shortcut-delete-btn svg {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
 }
 
 .shortcut-card:hover .shortcut-delete-btn {
@@ -555,22 +543,23 @@ body.fit-auto .bg-layer {
   background: var(--pinterest-red);
   border-color: var(--pinterest-red);
   color: #ffffff;
-  transform: scale(1.15);
+  transform: scale(1.2);
 }
 
-/* Add Shortcut Tile Button */
+/* Circular Add Shortcut Button */
 .shortcut-add-card {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  width: 74px;
-  padding: 0.5rem 0.25rem;
-  border-radius: 16px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
   cursor: pointer;
-  background: transparent;
-  border: none;
   color: var(--text-muted);
   font-family: inherit;
   transition: all 0.25s var(--transition-smooth);
@@ -578,27 +567,17 @@ body.fit-auto .bg-layer {
 
 .shortcut-add-card:hover {
   background: var(--glass-bg-hover);
+  border-color: rgba(255, 255, 255, 0.45);
+  border-style: solid;
   color: var(--text-primary);
-  transform: translateY(-4px);
+  transform: scale(1.1) translateX(4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .shortcut-add-icon-box {
-  width: 46px;
-  height: 46px;
-  border-radius: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px dashed rgba(255, 255, 255, 0.25);
-  transition: all 0.25s var(--transition-smooth);
-}
-
-.shortcut-add-card:hover .shortcut-add-icon-box {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.45);
-  border-style: solid;
-  transform: scale(1.06);
 }
 
 .shortcut-add-icon-box svg {
@@ -611,8 +590,8 @@ body.fit-auto .bg-layer {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 60px;
-  width: 180px;
+  height: 48px;
+  width: 48px;
 }
 
 .pulse-dot {
@@ -620,13 +599,79 @@ body.fit-auto .bg-layer {
   height: 8px;
   border-radius: 50%;
   background: var(--text-muted);
-  box-shadow: 16px 0 0 var(--text-muted), -16px 0 0 var(--text-muted);
+  box-shadow: 12px 0 0 var(--text-muted), -12px 0 0 var(--text-muted);
   animation: dotPulse 1.2s infinite ease-in-out;
 }
 
 @keyframes dotPulse {
   0%, 100% { opacity: 0.3; transform: scale(0.9); }
   50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* ==========================================================================
+   4. Bottom-Right Clock & Greeting Widget
+   ========================================================================== */
+
+.bottom-right-widget {
+  position: fixed;
+  bottom: 3rem;
+  right: 3.5rem;
+  text-align: right;
+  z-index: 30;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  transform: scale(var(--ui-scale, 1));
+  transform-origin: bottom right;
+  transition: transform 0.15s ease-out;
+}
+
+.date-display {
+  font-family: var(--font-primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: var(--text-shadow-sub);
+  margin-bottom: 0.3rem;
+}
+
+.time-display {
+  font-family: var(--font-primary);
+  font-size: clamp(3.8rem, 6.5vw, 5.8rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: #ffffff;
+  text-shadow: var(--text-shadow-hero);
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.time-digits {
+  font-variant-numeric: tabular-nums;
+}
+
+.time-ampm {
+  font-size: 0.38em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: var(--text-shadow-sub);
+}
+
+.greeting-display {
+  font-family: var(--font-primary);
+  font-size: clamp(1.2rem, 2.2vw, 1.55rem);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: var(--text-shadow-sub);
+  margin-top: 0.5rem;
 }
 
 /* ==========================================================================
@@ -1152,27 +1197,55 @@ body.fit-auto .bg-layer {
 }
 
 @media (max-width: 768px) {
-  .app-container {
-    padding: 1.2rem 1.2rem 1.5rem 1.2rem;
+  .top-right-controls {
+    top: 1rem;
+    right: 1rem;
+    gap: 0.5rem;
   }
 
-  .form-grid {
-    grid-template-columns: 1fr;
+  .icon-btn {
+    width: 38px;
+    height: 38px;
   }
 
-  .shortcuts-container {
-    gap: 0.6rem;
-    padding: 0.65rem 0.9rem;
+  .icon-btn svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .search-container {
+    top: 4.25rem;
+    max-width: 90vw;
+  }
+
+  .left-dock {
+    left: 1rem;
+    gap: 0.75rem;
   }
 
   .shortcut-card,
   .shortcut-add-card {
-    width: 62px;
+    width: 42px;
+    height: 42px;
   }
 
-  .shortcut-icon-box,
-  .shortcut-add-icon-box {
-    width: 40px;
-    height: 40px;
+  .shortcut-icon-img {
+    width: 20px;
+    height: 20px;
+  }
+
+  .bottom-right-widget {
+    bottom: 1.5rem;
+    right: 1.5rem;
+  }
+
+  .bottom-left-attribution {
+    bottom: 1.5rem;
+    left: 1rem;
+    max-width: 45vw;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
   }
 }

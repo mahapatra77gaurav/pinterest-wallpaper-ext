@@ -8,6 +8,8 @@
 // =============================================================================
 
 const DEFAULT_CONFIG = {
+  displayName: '',
+  uiScale: 100, // percentage (75% to 125%)
   sourceMode: 'pinterest-search', // 'pinterest-search' | 'pinterest-both' | 'pinterest-saved' | 'pinterest-feed' | 'pinterest-board' | 'direct-url' | 'local-upload'
   searchQuery: '4k dark cyberpunk wallpaper',
   username: 'pinterest',
@@ -63,6 +65,7 @@ let appState = {
   paginationBookmark: null,    // Cursor bookmark for Pinterest pagination
   isFetchingNextBatch: false,
   currentIndex: 0,
+  navToken: 0,                 // Monotonic navigation request token for cancellation-safety
   activeLayer: 1,              // 1 for #bg-1, 2 for #bg-2
   cycleTimer: null,
   preloadTimer: null,
@@ -82,7 +85,10 @@ const elements = {
   bg1: document.getElementById('bg-1'),
   bg2: document.getElementById('bg-2'),
   time: document.getElementById('time'),
+  timeDigits: document.getElementById('time-digits'),
+  timeAmpm: document.getElementById('time-ampm'),
   date: document.getElementById('date'),
+  greeting: document.getElementById('greeting'),
   shortcuts: document.getElementById('shortcuts'),
   pinLink: document.getElementById('pin-link'),
   pinTitle: document.getElementById('pin-title'),
@@ -100,6 +106,7 @@ const elements = {
   settingsForm: document.getElementById('settings-form'),
   
   // Settings Form Inputs
+  inputDisplayName: document.getElementById('input-display-name'),
   selectSourceMode: document.getElementById('select-source-mode'),
   selectFitMode: document.getElementById('select-fit-mode'),
   inputAutoRotate: document.getElementById('input-auto-rotate'),
@@ -124,12 +131,12 @@ const elements = {
   
   inputInterval: document.getElementById('input-interval'),
   inputTimeFormat: document.getElementById('input-timeformat'),
+  inputScale: document.getElementById('input-scale'),
+  scaleVal: document.getElementById('scale-val'),
   inputDim: document.getElementById('input-dim'),
   inputBlur: document.getElementById('input-blur'),
   dimVal: document.getElementById('dim-val'),
   blurVal: document.getElementById('blur-val'),
-  statusMsg: document.getElementById('status-msg'),
-  statusIcon: document.getElementById('status-icon'),
   presetChips: document.querySelectorAll('.preset-chip'),
   searchChips: document.querySelectorAll('.search-chip'),
   toast: document.getElementById('toast'),
@@ -374,7 +381,7 @@ function saveQueueToStorage() {
 async function loadConfig() {
   return new Promise((resolve) => {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.get(['pinterestConfig', 'search_query'], (result) => {
+      chrome.storage.local.get(['pinterestConfig', 'search_query', 'display_name', 'displayName', 'ui_scale', 'uiScale'], (result) => {
         let loaded = { ...DEFAULT_CONFIG };
         if (result && result.pinterestConfig) {
           loaded = { ...loaded, ...result.pinterestConfig };
@@ -382,15 +389,25 @@ async function loadConfig() {
         if (result && result.search_query) {
           loaded.searchQuery = result.search_query;
         }
+        if (result && (result.displayName || result.display_name)) {
+          loaded.displayName = result.displayName || result.display_name;
+        }
+        if (result && (result.uiScale !== undefined || result.ui_scale !== undefined)) {
+          loaded.uiScale = parseInt(result.uiScale ?? result.ui_scale, 10) || 100;
+        }
         resolve(loaded);
       });
     } else {
       try {
         const saved = localStorage.getItem('pinterestConfig');
         const savedSearch = localStorage.getItem('search_query');
+        const savedName = localStorage.getItem('display_name') || localStorage.getItem('displayName');
+        const savedScale = localStorage.getItem('ui_scale') || localStorage.getItem('uiScale');
         let loaded = { ...DEFAULT_CONFIG };
         if (saved) loaded = { ...loaded, ...JSON.parse(saved) };
         if (savedSearch) loaded.searchQuery = savedSearch;
+        if (savedName) loaded.displayName = savedName;
+        if (savedScale) loaded.uiScale = parseInt(savedScale, 10) || 100;
         resolve(loaded);
       } catch (e) {
         resolve({ ...DEFAULT_CONFIG });
@@ -405,13 +422,23 @@ async function saveConfig(newConfig) {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({ 
         pinterestConfig: appState.config,
-        search_query: appState.config.searchQuery || ''
+        search_query: appState.config.searchQuery || '',
+        display_name: appState.config.displayName || '',
+        displayName: appState.config.displayName || '',
+        ui_scale: appState.config.uiScale ?? 100,
+        uiScale: appState.config.uiScale ?? 100
       }, () => resolve());
     } else {
       try {
         localStorage.setItem('pinterestConfig', JSON.stringify(appState.config));
         if (appState.config.searchQuery) {
           localStorage.setItem('search_query', appState.config.searchQuery);
+        }
+        if (appState.config.displayName !== undefined) {
+          localStorage.setItem('display_name', appState.config.displayName);
+        }
+        if (appState.config.uiScale !== undefined) {
+          localStorage.setItem('ui_scale', String(appState.config.uiScale));
         }
       } catch (e) {}
       resolve();
@@ -420,8 +447,27 @@ async function saveConfig(newConfig) {
 }
 
 // =============================================================================
-// Clock & Date System
+// Clock & Date System with Dynamic Greeting
 // =============================================================================
+
+function getGreeting(hour, name = '') {
+  let baseGreeting = 'Good morning';
+  if (hour >= 5 && hour < 12) {
+    baseGreeting = 'Good morning';
+  } else if (hour >= 12 && hour < 17) {
+    baseGreeting = 'Good afternoon';
+  } else if (hour >= 17 && hour < 22) {
+    baseGreeting = 'Good evening';
+  } else {
+    baseGreeting = 'Good night';
+  }
+
+  const trimmedName = (name || appState.config.displayName || '').trim();
+  if (trimmedName) {
+    return `${baseGreeting}, ${trimmedName}`;
+  }
+  return baseGreeting;
+}
 
 function updateClock() {
   const now = new Date();
@@ -433,14 +479,32 @@ function updateClock() {
   if (is12h) {
     const ampm = hours >= 12 ? 'PM' : 'AM';
     hours = hours % 12 || 12;
-    elements.time.textContent = `${hours}:${minutes} ${ampm}`;
+    if (elements.timeDigits && elements.timeAmpm) {
+      elements.timeDigits.textContent = `${hours}:${minutes}`;
+      elements.timeAmpm.textContent = ` ${ampm}`;
+    } else if (elements.time) {
+      elements.time.textContent = `${hours}:${minutes} ${ampm}`;
+    }
   } else {
     const formattedHours = String(hours).padStart(2, '0');
-    elements.time.textContent = `${formattedHours}:${minutes}`;
+    if (elements.timeDigits && elements.timeAmpm) {
+      elements.timeDigits.textContent = `${formattedHours}:${minutes}`;
+      elements.timeAmpm.textContent = '';
+    } else if (elements.time) {
+      elements.time.textContent = `${formattedHours}:${minutes}`;
+    }
   }
 
-  const dateOptions = { weekday: 'long', month: 'long', day: 'numeric' };
-  elements.date.textContent = now.toLocaleDateString(undefined, dateOptions);
+  // Spaced, clean uppercase date (e.g. "SATURDAY, AUGUST 15")
+  if (elements.date) {
+    const dateOptions = { weekday: 'long', month: 'long', day: 'numeric' };
+    elements.date.textContent = now.toLocaleDateString('en-US', dateOptions).toUpperCase();
+  }
+
+  // Dynamic time-aware greeting with personalized display name
+  if (elements.greeting) {
+    elements.greeting.textContent = getGreeting(now.getHours(), appState.config.displayName);
+  }
 }
 
 function initClock() {
@@ -449,7 +513,7 @@ function initClock() {
 }
 
 // =============================================================================
-// Editable Shortcuts Dock
+// Editable Vertical Shortcuts Dock
 // =============================================================================
 
 function getCleanDomain(urlStr) {
@@ -551,6 +615,7 @@ async function saveUserShortcuts(shortcutsList) {
 }
 
 function renderShortcuts() {
+  if (!elements.shortcuts) return;
   elements.shortcuts.innerHTML = '';
   
   const list = appState.userShortcuts || [];
@@ -565,6 +630,7 @@ function renderShortcuts() {
     link.className = 'shortcut-card';
     link.href = formatUrl(site.url);
     link.title = `${title} (${site.url})`;
+    link.setAttribute('aria-label', title);
 
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'shortcut-delete-btn';
@@ -601,14 +667,8 @@ function renderShortcuts() {
     };
 
     iconBox.appendChild(img);
-
-    const titleSpan = document.createElement('span');
-    titleSpan.className = 'shortcut-title';
-    titleSpan.textContent = title;
-
     link.appendChild(deleteBtn);
     link.appendChild(iconBox);
-    link.appendChild(titleSpan);
     elements.shortcuts.appendChild(link);
   });
 
@@ -619,12 +679,11 @@ function renderShortcuts() {
   addBtn.setAttribute('aria-label', 'Add New Shortcut');
   addBtn.innerHTML = `
     <div class="shortcut-add-icon-box">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
         <line x1="12" y1="5" x2="12" y2="19"></line>
         <line x1="5" y1="12" x2="19" y2="12"></line>
       </svg>
     </div>
-    <span class="shortcut-title">+ Add</span>
   `;
   addBtn.addEventListener('click', openAddShortcutModal);
   elements.shortcuts.appendChild(addBtn);
@@ -745,9 +804,57 @@ function sanitizeBoard(str) {
   return clean.replace(/\.rss$/i, '').replace(/^\/+|\/+$/g, '');
 }
 
+/**
+ * Aggressively rewrites downscaled Pinterest thumbnail URLs to /originals/ master files
+ */
 function upgradePinterestImageUrl(rawUrl) {
-  if (!rawUrl) return null;
-  return rawUrl.replace(/\/(?:[0-9]+x[0-9]*|[0-9]+x)\//i, '/originals/');
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  return rawUrl.replace(/\/(?:236x|474x|564x|736x|1200x|\d+x\d*|\d+x)\//gi, '/originals/');
+}
+
+/**
+ * Generates preferred high-res resolution candidates with automatic fallback (/originals/ -> /1200x/ -> /736x/)
+ */
+function getCandidateUrls(wallpaper) {
+  const candidates = [];
+  if (!wallpaper || !wallpaper.url) return candidates;
+
+  const upgraded = upgradePinterestImageUrl(wallpaper.url) || wallpaper.url;
+  candidates.push(upgraded);
+
+  // If it's a pinterest image URL, construct high-res /1200x/ and /736x/ fallbacks
+  if (upgraded.includes('pinimg.com/')) {
+    const url1200 = upgraded.replace(/\/(?:originals|236x|474x|564x|736x|1200x|\d+x\d*|\d+x)\//gi, '/1200x/');
+    const url736 = upgraded.replace(/\/(?:originals|236x|474x|564x|736x|1200x|\d+x\d*|\d+x)\//gi, '/736x/');
+    if (url1200 !== upgraded && !candidates.includes(url1200)) candidates.push(url1200);
+    if (url736 !== upgraded && !candidates.includes(url736)) candidates.push(url736);
+  }
+
+  if (wallpaper.fallbackUrl && !candidates.includes(wallpaper.fallbackUrl)) {
+    candidates.push(wallpaper.fallbackUrl);
+  }
+  if (wallpaper.url !== upgraded && !candidates.includes(wallpaper.url)) {
+    candidates.push(wallpaper.url);
+  }
+
+  return candidates;
+}
+
+/**
+ * Dimension & Quality Gate: enforces minimum 1280px effective landscape width and 0.9 Megapixels
+ */
+function isHighResWallpaper(width, height, isPortrait = false) {
+  if (!width || !height || width <= 0 || height <= 0) return false;
+  const totalPixels = width * height;
+  
+  // Calculate effective landscape width (factoring in rotation if portrait)
+  const effectiveLandscapeWidth = (appState.config.autoRotate && isPortrait) ? Math.max(width, height) : width;
+
+  // Quality Threshold: effective width >= 1280px AND total resolution >= 0.9 Megapixels (900,000 px)
+  if (effectiveLandscapeWidth < 1280 || totalPixels < 900000) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -755,7 +862,7 @@ function upgradePinterestImageUrl(rawUrl) {
  */
 function extractPinsFromHtml(html, defaultTitle, defaultLink) {
   if (!html) return [];
-  const pinRegex = /https:\/\/i\.pinimg\.com\/(?:236x|474x|564x|736x|originals)\/([a-f0-9\/]+)\.(jpg|png|webp)/gi;
+  const pinRegex = /https:\/\/i\.pinimg\.com\/(?:236x|474x|564x|736x|1200x|originals)\/([a-f0-9\/]+)\.(jpg|png|webp)/gi;
   const pins = [];
   const seen = new Set();
   let match;
@@ -770,7 +877,7 @@ function extractPinsFromHtml(html, defaultTitle, defaultLink) {
     }
     
     const originalUrl = `https://i.pinimg.com/originals/${hash}.${ext}`;
-    const fallbackUrl = `https://i.pinimg.com/736x/${hash}.${ext}`;
+    const fallbackUrl = `https://i.pinimg.com/1200x/${hash}.${ext}`;
     
     if (!seen.has(hash)) {
       seen.add(hash);
@@ -1465,46 +1572,28 @@ function rotateActiveWallpaper() {
 }
 
 /**
- * Preloads a single image and inspects natural dimensions for portrait auto-rotation
+ * Preloads candidate URLs with high-res quality gate (>=1280px landscape width, >=0.9MP) and per-candidate timeout
  */
 function preloadImage(wallpaper) {
-  if (!wallpaper || !wallpaper.url) {
+  if (!wallpaper) {
     return Promise.resolve({ success: false });
   }
 
   // Priority 1: Check persistent custom rotation mapping (user_image_rotations)
   const savedRot = getSavedRotation(wallpaper);
+  const candidates = getCandidateUrls(wallpaper);
 
-  if (appState.preloadedCache.has(wallpaper.url)) {
-    const cachedImg = appState.preloadedCache.get(wallpaper.url);
-    const width = cachedImg.naturalWidth || cachedImg.width || 1920;
-    const height = cachedImg.naturalHeight || cachedImg.height || 1080;
-    const isPortrait = height > width;
-
-    if (savedRot !== undefined) {
-      wallpaper.manualRotation = savedRot;
-      wallpaper.rotation = savedRot;
-    } else if (wallpaper.manualRotation !== undefined) {
-      wallpaper.rotation = wallpaper.manualRotation;
-    } else {
-      let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
-      wallpaper.rotation = baseRotation;
-    }
-    return Promise.resolve({ success: true, src: wallpaper.url, rotation: wallpaper.rotation });
-  }
-
-  return new Promise((resolve) => {
-    const img = new Image();
-    
-    img.onload = () => {
-      // Natural dimension inspection for automatic portrait-to-landscape reorientation (270° CCW)
-      const width = img.naturalWidth || img.width;
-      const height = img.naturalHeight || img.height;
+  // Check cache for any already-cached candidate that meets quality standards
+  for (const candidate of candidates) {
+    if (appState.preloadedCache.has(candidate)) {
+      const cachedImg = appState.preloadedCache.get(candidate);
+      const width = cachedImg.naturalWidth || cachedImg.width || 1920;
+      const height = cachedImg.naturalHeight || cachedImg.height || 1080;
       const isPortrait = height > width;
 
-      wallpaper.naturalWidth = width;
-      wallpaper.naturalHeight = height;
-      wallpaper.isPortrait = isPortrait;
+      if (!isHighResWallpaper(width, height, isPortrait)) {
+        continue;
+      }
 
       if (savedRot !== undefined) {
         wallpaper.manualRotation = savedRot;
@@ -1516,28 +1605,45 @@ function preloadImage(wallpaper) {
         wallpaper.rotation = baseRotation;
       }
 
-      // Decode immediately to ensure GPU rasterization is ready
-      if (img.decode) {
-        img.decode().catch(() => {});
-      }
+      wallpaper.resolvedUrl = candidate;
+      return Promise.resolve({ success: true, src: candidate, rotation: wallpaper.rotation });
+    }
+  }
 
-      // Keep cache size bounded to maximum 4 active images to prevent RAM buildup
-      if (appState.preloadedCache.size >= 4) {
-        const oldestKey = appState.preloadedCache.keys().next().value;
-        appState.preloadedCache.delete(oldestKey);
-      }
-      appState.preloadedCache.set(wallpaper.url, img);
-      resolve({ success: true, src: wallpaper.url, rotation: wallpaper.rotation });
-    };
+  // Sequentially attempt candidates: /originals/ -> /1200x/ -> /736x/ with fast 2500ms timeout per candidate
+  return new Promise(async (resolve) => {
+    for (const url of candidates) {
+      const candidateResult = await new Promise((resCandidate) => {
+        let settled = false;
+        const img = new Image();
+        const timeoutId = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            img.src = '';
+            resCandidate(null);
+          }
+        }, 2500);
 
-    img.onerror = () => {
-      // If /originals/ resolution fails, fallback to 736x
-      if (wallpaper.fallbackUrl && wallpaper.fallbackUrl !== wallpaper.url) {
-        const fallbackImg = new Image();
-        fallbackImg.onload = () => {
-          const width = fallbackImg.naturalWidth || fallbackImg.width;
-          const height = fallbackImg.naturalHeight || fallbackImg.height;
+        img.onload = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+
+          const width = img.naturalWidth || img.width || 0;
+          const height = img.naturalHeight || img.height || 0;
           const isPortrait = height > width;
+
+          // Quality Gate: verify resolution threshold (effective width >= 1280px & >= 0.9MP)
+          if (!isHighResWallpaper(width, height, isPortrait)) {
+            console.warn(`[QualityGate] Dropping low-res candidate (${width}x${height}, ${(width * height / 1e6).toFixed(2)}MP): ${url}`);
+            resCandidate(null);
+            return;
+          }
+
+          wallpaper.naturalWidth = width;
+          wallpaper.naturalHeight = height;
+          wallpaper.isPortrait = isPortrait;
+          wallpaper.resolvedUrl = url;
 
           if (savedRot !== undefined) {
             wallpaper.manualRotation = savedRot;
@@ -1549,18 +1655,37 @@ function preloadImage(wallpaper) {
             wallpaper.rotation = baseRotation;
           }
 
-          if (fallbackImg.decode) fallbackImg.decode().catch(() => {});
-          appState.preloadedCache.set(wallpaper.fallbackUrl, fallbackImg);
-          resolve({ success: true, src: wallpaper.fallbackUrl, rotation: wallpaper.rotation });
-        };
-        fallbackImg.onerror = () => resolve({ success: false });
-        fallbackImg.src = wallpaper.fallbackUrl;
-      } else {
-        resolve({ success: false });
-      }
-    };
+          if (img.decode) {
+            img.decode().catch(() => {});
+          }
 
-    img.src = wallpaper.url;
+          // Keep cache bounded to 6 active images
+          if (appState.preloadedCache.size >= 6) {
+            const oldestKey = appState.preloadedCache.keys().next().value;
+            appState.preloadedCache.delete(oldestKey);
+          }
+          appState.preloadedCache.set(url, img);
+
+          resCandidate({ success: true, src: url, rotation: wallpaper.rotation });
+        };
+
+        img.onerror = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          resCandidate(null);
+        };
+
+        img.src = url;
+      });
+
+      if (candidateResult && candidateResult.success) {
+        return resolve(candidateResult);
+      }
+    }
+
+    // All candidates failed to load or were below quality threshold
+    resolve({ success: false, reason: 'low-res-or-load-error' });
   });
 }
 
@@ -1576,97 +1701,148 @@ function preloadNextImmediateImage() {
   }
 }
 
-async function displayWallpaper(index, manual = false) {
-  if (appState.wallpapers.length === 0) return;
+/**
+ * Self-healing display & navigation engine with monotonic cancellation token and continuous circular traversal
+ */
+async function displayWallpaper(startIndex, directionOrManual = 1, manual = false) {
+  if (!appState.wallpapers || appState.wallpapers.length === 0) {
+    appState.wallpapers = [...FALLBACK_WALLPAPERS];
+  }
 
-  // Infinite wrap-around & reshuffle on cycle wrap
-  let nextIndex = index;
-  if (nextIndex >= appState.wallpapers.length) {
-    nextIndex = 0;
-    // Reshuffle wallpapers for endless non-repetitive variety
-    if (appState.wallpapers.length > 2) {
-      const current = appState.wallpapers[appState.currentIndex];
-      appState.wallpapers = shuffleArray([...appState.wallpapers]);
-      // Ensure we don't pick the same wallpaper immediately
-      if (appState.wallpapers[0].url === current?.url && appState.wallpapers.length > 1) {
-        const temp = appState.wallpapers[0];
-        appState.wallpapers[0] = appState.wallpapers[1];
-        appState.wallpapers[1] = temp;
+  let direction = 1;
+  let isManual = false;
+  if (typeof directionOrManual === 'boolean') {
+    isManual = directionOrManual;
+    direction = 1;
+  } else if (typeof directionOrManual === 'number') {
+    direction = directionOrManual;
+    isManual = manual;
+  }
+
+  // Monotonic navigation token: supersedes in-flight requests and cancels stale transitions
+  const currentNavToken = ++appState.navToken;
+
+  let candidateIndex = startIndex;
+  let attempts = 0;
+  const maxAttempts = Math.min(30, appState.wallpapers.length + 10);
+
+  while (attempts < maxAttempts && appState.wallpapers.length > 0) {
+    // If a subsequent navigation click arrived, abort immediately
+    if (currentNavToken !== appState.navToken) return;
+
+    attempts++;
+
+    // Continuous circular buffer wrap
+    const total = appState.wallpapers.length;
+    let wrappedIndex = ((candidateIndex % total) + total) % total;
+
+    const candidateItem = appState.wallpapers[wrappedIndex];
+    if (!candidateItem) {
+      candidateIndex += (direction >= 0 ? 1 : -1);
+      continue;
+    }
+
+    // Preload current candidate through quality gate and fallback URLs
+    const result = await preloadImage(candidateItem);
+
+    // Verify token after async preload
+    if (currentNavToken !== appState.navToken) return;
+
+    if (!result || !result.success) {
+      console.warn(`[SelfHealing] Dropping failed/blurry wallpaper #${wrappedIndex} ("${candidateItem.title || candidateItem.url}") and seeking in direction ${direction >= 0 ? '+1' : '-1'}...`);
+      // Remove bad candidate from active queue
+      appState.wallpapers.splice(wrappedIndex, 1);
+      if (appState.wallpapers.length === 0) {
+        appState.wallpapers = [...FALLBACK_WALLPAPERS];
+      }
+
+      // If going backwards (-1), target the previous item before wrappedIndex
+      // If going forwards (+1 or 0), the splice shifted the next item to wrappedIndex
+      if (direction < 0) {
+        candidateIndex = wrappedIndex - 1;
+      } else {
+        candidateIndex = wrappedIndex;
+      }
+      continue;
+    }
+
+    // Valid high-res wallpaper confirmed!
+    appState.currentIndex = wrappedIndex;
+    const currentItem = appState.wallpapers[wrappedIndex];
+    const imageSrc = result.src || currentItem.resolvedUrl || currentItem.url;
+
+    const nextLayerNum = appState.activeLayer === 1 ? 2 : 1;
+    const activeLayerEl = appState.activeLayer === 1 ? elements.bg1 : elements.bg2;
+    const nextLayerEl = nextLayerNum === 1 ? elements.bg1 : elements.bg2;
+
+    // Check persistent rotation map (user_image_rotations store)
+    const savedRot = getSavedRotation(currentItem);
+    const rotation = savedRot !== undefined ? savedRot : (currentItem.rotation || 0);
+    currentItem.rotation = rotation;
+
+    // 1. Prepare inactive layer instantaneously while hidden (opacity 0)
+    setLayerRotation(nextLayerEl, rotation);
+    if (elements.bgAmbient) {
+      setLayerRotation(elements.bgAmbient, rotation);
+    }
+
+    nextLayerEl.style.backgroundImage = `url("${imageSrc}")`;
+    if (elements.bgAmbient) {
+      elements.bgAmbient.style.backgroundImage = `url("${imageSrc}")`;
+    }
+
+    // Force reflow so rotation and dimensions are applied instantaneously before opacity crossfade
+    void nextLayerEl.offsetHeight;
+
+    // Verify token one last time before active layer transition
+    if (currentNavToken !== appState.navToken) return;
+
+    // 2. Trigger pure opacity crossfade (0 -> 1 and 1 -> 0)
+    nextLayerEl.classList.add('active');
+    activeLayerEl.classList.remove('active');
+
+    appState.activeLayer = nextLayerNum;
+
+    if (elements.pinTitle) {
+      elements.pinTitle.textContent = currentItem.title || 'Wallpaper';
+    }
+    if (elements.pinLink) {
+      elements.pinLink.href = currentItem.link || '#';
+      elements.pinLink.title = `View Source: ${currentItem.title}`;
+    }
+
+    // Persist current wallpaper with rotation to cold-start cache immediately for 0ms next tab load
+    saveActiveWallpaperToColdStart(currentItem);
+
+    // Calculate next sequential wallpaper and persist as next cold-start target for future new tabs
+    if (appState.wallpapers.length > 1) {
+      const nextSequentialIdx = (wrappedIndex + 1) % appState.wallpapers.length;
+      const nextSequentialItem = appState.wallpapers[nextSequentialIdx];
+      if (nextSequentialItem) {
+        saveNextColdStartWallpaper(nextSequentialItem);
       }
     }
-  } else if (nextIndex < 0) {
-    nextIndex = appState.wallpapers.length - 1;
-  }
 
-  appState.currentIndex = nextIndex;
-  const currentItem = appState.wallpapers[nextIndex];
+    // Update global queue state and current pointer across tabs
+    saveQueueToStorage();
 
-  // Preload current before crossfading
-  const result = await preloadImage(currentItem);
-  const imageSrc = result.success ? (result.src || currentItem.url) : (currentItem.fallbackUrl || currentItem.url);
+    // Update Settings Active Status with lazy count
+    updateActiveStatusLabel();
 
-  const nextLayerNum = appState.activeLayer === 1 ? 2 : 1;
-  const activeLayerEl = appState.activeLayer === 1 ? elements.bg1 : elements.bg2;
-  const nextLayerEl = nextLayerNum === 1 ? elements.bg1 : elements.bg2;
-
-  // Check persistent rotation map (user_image_rotations store)
-  const savedRot = getSavedRotation(currentItem);
-  const rotation = savedRot !== undefined ? savedRot : (currentItem.rotation || 0);
-  currentItem.rotation = rotation;
-
-  // 1. Prepare inactive layer instantaneously while hidden (opacity 0)
-  setLayerRotation(nextLayerEl, rotation);
-  if (elements.bgAmbient) {
-    setLayerRotation(elements.bgAmbient, rotation);
-  }
-
-  nextLayerEl.style.backgroundImage = `url("${imageSrc}")`;
-  if (elements.bgAmbient) {
-    elements.bgAmbient.style.backgroundImage = `url("${imageSrc}")`;
-  }
-
-  // Force reflow/style flush so rotation and dimensions are applied instantaneously before opacity crossfade
-  void nextLayerEl.offsetHeight;
-
-  // 2. Trigger pure opacity crossfade (0 -> 1 and 1 -> 0)
-  nextLayerEl.classList.add('active');
-  activeLayerEl.classList.remove('active');
-
-  appState.activeLayer = nextLayerNum;
-
-  elements.pinTitle.textContent = currentItem.title || 'Wallpaper';
-  elements.pinLink.href = currentItem.link || '#';
-  elements.pinLink.title = `View Source: ${currentItem.title}`;
-
-  // Persist current wallpaper with rotation to cold-start cache immediately for 0ms next tab load
-  saveActiveWallpaperToColdStart(currentItem);
-
-  // Calculate next sequential wallpaper and persist as next cold-start target for future new tabs
-  if (appState.wallpapers.length > 1) {
-    const nextSequentialIdx = (nextIndex + 1) % appState.wallpapers.length;
-    const nextSequentialItem = appState.wallpapers[nextSequentialIdx];
-    if (nextSequentialItem) {
-      saveNextColdStartWallpaper(nextSequentialItem);
+    // Threshold monitor: if fewer than 6 unviewed images remain in queue, fetch next page in background!
+    const unviewedRemaining = appState.wallpapers.length - (appState.currentIndex + 1);
+    if (unviewedRemaining <= 6) {
+      fetchNextBatch();
     }
-  }
 
-  // Update global queue state and current pointer across tabs
-  saveQueueToStorage();
+    // Lazy Preload NEXT image into memory for zero-flash transition
+    preloadNextImmediateImage();
 
-  // Update Settings Active Status with lazy count
-  updateActiveStatusLabel();
+    if (isManual) {
+      resetCycleTimer();
+    }
 
-  // Threshold monitor: if fewer than 6 unviewed images remain in queue, fetch next page in background!
-  const unviewedRemaining = appState.wallpapers.length - (appState.currentIndex + 1);
-  if (unviewedRemaining <= 6) {
-    fetchNextBatch();
-  }
-
-  // Lazy Preload NEXT image into memory for zero-flash transition
-  preloadNextImmediateImage();
-
-  if (manual) {
-    resetCycleTimer();
+    return;
   }
 }
 
@@ -1698,15 +1874,19 @@ function updateActiveStatusLabel() {
 }
 
 function nextWallpaper(manual = true) {
-  if (appState.wallpapers.length > 1) {
-    displayWallpaper(appState.currentIndex + 1, manual);
+  if (appState.wallpapers.length <= 5) {
+    fetchNextBatch();
   }
+  const nextIdx = appState.currentIndex + 1;
+  displayWallpaper(nextIdx, 1, manual);
 }
 
 function prevWallpaper(manual = true) {
-  if (appState.wallpapers.length > 1) {
-    displayWallpaper(appState.currentIndex - 1, manual);
+  if (appState.wallpapers.length <= 5) {
+    fetchNextBatch();
   }
+  const prevIdx = appState.currentIndex - 1;
+  displayWallpaper(prevIdx, -1, manual);
 }
 
 function startCycleTimer() {
@@ -1987,16 +2167,21 @@ function applyVisualSettings() {
   const dim = appState.config.dim ?? 25;
   const blur = appState.config.blur ?? 0;
   const fitMode = appState.config.fitMode || 'cover';
+  const uiScale = appState.config.uiScale ?? 100;
+  const scaleFactor = uiScale / 100;
 
   document.documentElement.style.setProperty('--dim-overlay', `rgba(0, 0, 0, ${dim / 100})`);
   document.documentElement.style.setProperty('--bg-blur-amount', `${blur}px`);
   document.documentElement.style.setProperty('--bg-size', fitMode);
+  document.documentElement.style.setProperty('--ui-scale', `${scaleFactor}`);
 
   document.body.classList.remove('fit-cover', 'fit-contain', 'fit-auto');
   document.body.classList.add(`fit-${fitMode}`);
   
   if (elements.dimVal) elements.dimVal.textContent = dim;
   if (elements.blurVal) elements.blurVal.textContent = blur;
+  if (elements.scaleVal) elements.scaleVal.textContent = uiScale;
+  if (elements.inputScale) elements.inputScale.value = uiScale;
 }
 
 function updateStatus(type, msg) {
@@ -2013,6 +2198,10 @@ function updateStatus(type, msg) {
 }
 
 function openSettingsModal() {
+  if (elements.inputDisplayName) {
+    elements.inputDisplayName.value = appState.config.displayName || '';
+  }
+
   const mode = appState.config.sourceMode || 'pinterest-search';
   elements.selectSourceMode.value = mode;
   updateFormVisibility(mode);
@@ -2034,6 +2223,14 @@ function openSettingsModal() {
   elements.inputDirectUrl.value = appState.config.directUrl || '';
   elements.inputInterval.value = appState.config.interval || 30;
   elements.inputTimeFormat.value = appState.config.timeFormat || '12h';
+  
+  if (elements.inputScale) {
+    elements.inputScale.value = appState.config.uiScale ?? 100;
+  }
+  if (elements.scaleVal) {
+    elements.scaleVal.textContent = appState.config.uiScale ?? 100;
+  }
+
   elements.inputDim.value = appState.config.dim ?? 25;
   elements.inputBlur.value = appState.config.blur ?? 0;
   
@@ -2103,6 +2300,26 @@ function handleLocalFileUpload(file) {
 // =============================================================================
 
 function setupEventListeners() {
+  // Search Form Submit: Google Search or Direct URL Navigation
+  if (elements.searchForm) {
+    elements.searchForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const rawQuery = (elements.searchInput?.value || '').trim();
+      if (!rawQuery) return;
+
+      const isFullUrl = /^https?:\/\//i.test(rawQuery) || /^file:\/\//i.test(rawQuery);
+      const isDomainLike = /^(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,})(?::\d+)?(?:\/.*)?$/i.test(rawQuery);
+
+      if (isFullUrl) {
+        window.location.href = rawQuery;
+      } else if (isDomainLike && !rawQuery.includes(' ')) {
+        window.location.href = 'https://' + rawQuery;
+      } else {
+        window.location.href = `https://www.google.com/search?q=${encodeURIComponent(rawQuery)}`;
+      }
+    });
+  }
+
   // Navigation Controls
   elements.prevBtn.addEventListener('click', () => prevWallpaper(true));
   elements.nextBtn.addEventListener('click', () => nextWallpaper(true));
@@ -2180,6 +2397,14 @@ function setupEventListeners() {
   });
 
   // Sliders Real-time input
+  if (elements.inputScale) {
+    elements.inputScale.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value, 10) || 100;
+      if (elements.scaleVal) elements.scaleVal.textContent = val;
+      document.documentElement.style.setProperty('--ui-scale', `${val / 100}`);
+    });
+  }
+
   elements.inputDim.addEventListener('input', (e) => {
     const val = e.target.value;
     elements.dimVal.textContent = val;
@@ -2223,6 +2448,7 @@ function setupEventListeners() {
   elements.settingsForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     
+    const newDisplayName = (elements.inputDisplayName?.value || '').trim();
     const mode = elements.selectSourceMode.value;
     const newSearchQuery = (elements.inputSearchQuery?.value || '4k dark cyberpunk wallpaper').trim();
     const newUsername = sanitizeHandle(elements.inputUsername.value) || 'pinterest';
@@ -2232,10 +2458,12 @@ function setupEventListeners() {
     const newAutoRotate = elements.inputAutoRotate ? elements.inputAutoRotate.checked : true;
     const newInterval = Math.max(5, parseInt(elements.inputInterval.value, 10) || 30);
     const newTimeFormat = elements.inputTimeFormat.value || '12h';
+    const newUiScale = parseInt(elements.inputScale?.value, 10) || 100;
     const newDim = parseInt(elements.inputDim.value, 10) || 25;
     const newBlur = parseInt(elements.inputBlur.value, 10) || 0;
 
     const updatedConfig = {
+      displayName: newDisplayName,
       sourceMode: mode,
       searchQuery: newSearchQuery,
       username: newUsername,
@@ -2245,6 +2473,7 @@ function setupEventListeners() {
       autoRotate: newAutoRotate,
       interval: newInterval,
       timeFormat: newTimeFormat,
+      uiScale: newUiScale,
       dim: newDim,
       blur: newBlur
     };
@@ -2266,6 +2495,10 @@ function setupEventListeners() {
 
   // Reset Defaults Button
   elements.resetBtn.addEventListener('click', async () => {
+    if (elements.inputDisplayName) {
+      elements.inputDisplayName.value = DEFAULT_CONFIG.displayName || '';
+    }
+
     elements.selectSourceMode.value = DEFAULT_CONFIG.sourceMode;
     updateFormVisibility(DEFAULT_CONFIG.sourceMode);
 
@@ -2286,6 +2519,11 @@ function setupEventListeners() {
     elements.inputDirectUrl.value = DEFAULT_CONFIG.directUrl;
     elements.inputInterval.value = DEFAULT_CONFIG.interval;
     elements.inputTimeFormat.value = DEFAULT_CONFIG.timeFormat;
+
+    if (elements.inputScale) elements.inputScale.value = DEFAULT_CONFIG.uiScale;
+    if (elements.scaleVal) elements.scaleVal.textContent = DEFAULT_CONFIG.uiScale;
+    document.documentElement.style.setProperty('--ui-scale', `${DEFAULT_CONFIG.uiScale / 100}`);
+
     elements.inputDim.value = DEFAULT_CONFIG.dim;
     elements.inputBlur.value = DEFAULT_CONFIG.blur;
     

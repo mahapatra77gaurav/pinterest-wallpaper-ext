@@ -3,6 +3,11 @@
  * Handles privileged network requests, single-page & multi-page bookmark pagination, search queries, and CORS bypass.
  */
 
+function upgradeToOriginalsUrl(url) {
+  if (!url || typeof url !== 'string') return url;
+  return url.replace(/\/(?:236x|474x|564x|736x|1200x|\d+x\d*|\d+x)\//gi, '/originals/');
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'FETCH_RSS' || message.type === 'FETCH_URL') {
     fetch(message.url, {
@@ -372,7 +377,7 @@ async function fetchHomefeedSinglePage(bookmark = null) {
             pins.push({
               id: item.id || null,
               title,
-              url: orig.replace(/\/\d+x\//, '/originals/'),
+              url: upgradeToOriginalsUrl(orig),
               fallbackUrl: fallback,
               link
             });
@@ -428,7 +433,7 @@ async function fetchHomefeedSinglePage(bookmark = null) {
                 pins.push({
                   id: pin.id || id,
                   title: pin.title || pin.grid_title || pin.description || 'Personalized Home Feed Wallpaper',
-                  url: orig.replace(/\/\d+x\//, '/originals/'),
+                  url: upgradeToOriginalsUrl(orig),
                   fallbackUrl: orig,
                   link: `https://www.pinterest.com/pin/${pin.id || id}/`
                 });
@@ -460,7 +465,7 @@ async function fetchHomefeedSinglePage(bookmark = null) {
                 pins.push({
                   id: pin.id || id,
                   title: pin.title || pin.grid_title || pin.description || 'Personalized Home Feed Wallpaper',
-                  url: orig.replace(/\/\d+x\//, '/originals/'),
+                  url: upgradeToOriginalsUrl(orig),
                   fallbackUrl: orig,
                   link: `https://www.pinterest.com/pin/${pin.id || id}/`
                 });
@@ -546,7 +551,7 @@ async function fetchAllUserPins(username, maxPages = 12) {
         seenUrls.add(origUrl);
         allPins.push({
           title,
-          url: origUrl,
+          url: upgradeToOriginalsUrl(origUrl),
           fallbackUrl,
           link
         });
@@ -629,7 +634,7 @@ async function fetchPinterestSearch(query, maxPages = 3) {
         seenUrls.add(orig);
         allPins.push({
           title,
-          url: orig,
+          url: upgradeToOriginalsUrl(orig),
           fallbackUrl: fallback,
           link
         });

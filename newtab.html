@@ -6,7 +6,7 @@
   <title>New Tab</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <!-- Instant Cold-Start First-Paint (0ms perceptual delay with persistent rotation store & cross-tab progression) -->
   <script>
@@ -42,35 +42,16 @@
   <!-- Radial Vignette & Contrast Overlay Layer -->
   <div class="vignette-overlay" aria-hidden="true"></div>
 
-  <!-- Main Application Container -->
+  <!-- Main Application Container: Quadrant Architecture -->
   <div class="app-container">
     
-    <!-- Top Bar: Current Wallpaper Attribution & Action Controls -->
-    <header class="top-bar">
-      <div id="wallpaper-info" class="wallpaper-info" title="Current wallpaper details">
-        <a id="pin-link" href="#" target="_blank" rel="noopener noreferrer" class="pin-link glass-pill">
-          <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 0a12 12 0 0 0-4.37 23.17c-.07-.99-.13-2.52.03-3.61.14-.98.92-3.92.92-3.92s-.23-.47-.23-1.16c0-1.09.63-1.9 1.42-1.9.67 0 .99.5 1 .1 1.1 0 .69-.44 1.73-.67 2.69-.19.78.39 1.42 1.16 1.42 1.39 0 2.46-1.47 2.46-3.59 0-1.88-1.35-3.19-3.28-3.19-2.4 0-3.8 1.8-3.8 3.66 0 .72.28 1.5.63 1.92.07.08.08.16.06.24-.07.28-.22.88-.25 1-.04.16-.13.2-.3.12-1.11-.52-1.81-2.14-1.81-3.45 0-2.81 2.04-5.39 5.88-5.39 3.09 0 5.49 2.2 5.49 5.14 0 3.07-1.93 5.54-4.62 5.54-.9 0-1.75-.47-2.04-1.02l-.56 2.12c-.2 1.05-.75 2.37-1.12 3.19A12 12 0 1 0 12 0z"/>
-          </svg>
-          <span id="pin-title" class="pin-title">Pinterest Wallpaper</span>
-        </a>
-      </div>
-
-      <div class="top-actions">
-        <!-- Manual Wallpaper Navigation (Active in Cycling Modes) -->
+    <!-- 1. Top-Right Control & Attribution Container -->
+    <div class="top-right-container" aria-label="Controls and attribution">
+      <!-- Row 1: Action Controls Cluster -->
+      <nav class="top-right-controls" aria-label="Wallpaper controls">
         <button id="prev-btn" class="glass-btn icon-btn" title="Previous Wallpaper (←)" aria-label="Previous Wallpaper">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 18 9 12 15 6"></polyline>
-          </svg>
-        </button>
-
-        <button id="pause-btn" class="glass-btn icon-btn" title="Pause / Play Cycling (Space)" aria-label="Pause / Play Cycling">
-          <svg id="pause-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="6" y="4" width="4" height="16"></rect>
-            <rect x="14" y="4" width="4" height="16"></rect>
-          </svg>
-          <svg id="play-icon" class="hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="5 3 19 12 5 21 5 3"></polygon>
           </svg>
         </button>
 
@@ -80,51 +61,71 @@
           </svg>
         </button>
 
-        <!-- Manual Wallpaper Orientation Rotate -->
         <button id="rotate-btn" class="glass-btn icon-btn" title="Rotate Wallpaper 90° (R)" aria-label="Rotate Wallpaper">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
           </svg>
         </button>
 
-        <!-- Settings Modal Trigger -->
+        <button id="pause-btn" class="glass-btn icon-btn hidden-control" title="Pause / Play Cycling (Space)" aria-label="Pause / Play Cycling" style="display: none;">
+          <svg id="pause-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="6" y="4" width="4" height="16"></rect>
+            <rect x="14" y="4" width="4" height="16"></rect>
+          </svg>
+          <svg id="play-icon" class="hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+        </button>
+
         <button id="settings-btn" class="glass-btn icon-btn" title="Settings" aria-label="Settings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
           </svg>
         </button>
-      </div>
-    </header>
+      </nav>
 
-    <!-- Central Hero: Time, Date & Quick Search -->
-    <main class="center-content">
-      <div class="clock-container">
-        <h1 id="time" class="time-display">--:--</h1>
-        <p id="date" class="date-display">Loading...</p>
+      <!-- Row 2: Wallpaper Source Attribution Pill (Directly Beneath Row 1) -->
+      <div id="wallpaper-info" class="wallpaper-info" title="Current wallpaper details">
+        <a id="pin-link" href="#" target="_blank" rel="noopener noreferrer" class="pin-link glass-pill" aria-label="Current wallpaper source">
+          <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0a12 12 0 0 0-4.37 23.17c-.07-.99-.13-2.52.03-3.61.14-.98.92-3.92.92-3.92s-.23-.47-.23-1.16c0-1.09.63-1.9 1.42-1.9.67 0 .99.5 1 .1 1.1 0 .69-.44 1.73-.67 2.69-.19.78.39 1.42 1.16 1.42 1.39 0 2.46-1.47 2.46-3.59 0-1.88-1.35-3.19-3.28-3.19-2.4 0-3.8 1.8-3.8 3.66 0 .72.28 1.5.63 1.92.07.08.08.16.06.24-.07.28-.22.88-.25 1-.04.16-.13.2-.3.12-1.11-.52-1.81-2.14-1.81-3.45 0-2.81 2.04-5.39 5.88-5.39 3.09 0 5.49 2.2 5.49 5.14 0 3.07-1.93 5.54-4.62 5.54-.9 0-1.75-.47-2.04-1.02l-.56 2.12c-.2 1.05-.75 2.37-1.12 3.19A12 12 0 1 0 12 0z"/>
+          </svg>
+          <span id="pin-title" class="pin-title">Pinterest Wallpaper</span>
+        </a>
       </div>
+    </div>
 
-      <!-- Quick Web Search Bar -->
+    <!-- 2. Top-Center Search Bar -->
+    <div class="search-container">
       <form id="search-form" class="search-form" action="https://www.google.com/search" method="get">
         <div class="search-bar glass-panel">
-          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-          <input type="text" id="search-input" name="q" placeholder="Search the web or type a URL..." autocomplete="off" spellcheck="false">
+          <input type="text" id="search-input" name="q" placeholder="Search or type a URL" autocomplete="off" spellcheck="false">
         </div>
       </form>
-    </main>
+    </div>
 
-    <!-- Bottom Dock: Editable Shortcuts -->
-    <footer class="bottom-dock">
-      <div id="shortcuts" class="shortcuts-container glass-panel" role="region" aria-label="Quick Shortcuts">
+    <!-- 3. Left-Aligned Vertical Shortcuts Dock -->
+    <aside class="left-dock" aria-label="Quick Shortcuts">
+      <div id="shortcuts" class="shortcuts-vertical-container" role="region" aria-label="Quick Shortcuts">
         <!-- Dynamic Shortcut Cards + Add Button injected via newtab.js -->
         <div class="shortcuts-loading">
           <span class="pulse-dot"></span>
         </div>
       </div>
-    </footer>
+    </aside>
+
+    <!-- 4. Bottom-Right Clock & Greeting Widget -->
+    <div class="bottom-right-widget" aria-label="Date and Time">
+      <p id="date" class="date-display">Loading...</p>
+      <h1 id="time" class="time-display"><span id="time-digits" class="time-digits">--:--</span><span id="time-ampm" class="time-ampm"></span></h1>
+      <p id="greeting" class="greeting-display">Good afternoon</p>
+    </div>
+
   </div>
 
   <!-- Add New Shortcut Dialog Modal -->
@@ -209,6 +210,15 @@
       </div>
 
       <form id="settings-form" class="settings-form" method="dialog">
+        <!-- Display Name / User Name for Personalized Greeting -->
+        <div class="form-group">
+          <label for="input-display-name">Display Name / User Name</label>
+          <div class="input-wrapper">
+            <input type="text" id="input-display-name" name="displayName" placeholder="e.g., Alex" autocomplete="off" spellcheck="false">
+          </div>
+          <span class="field-hint">Personalize your dynamic clock greeting (e.g. "Good morning, Alex")</span>
+        </div>
+
         <!-- 1. Wallpaper Sourcing Mode Selector -->
         <div class="form-group">
           <label for="select-source-mode">Wallpaper Sourcing Mode</label>
@@ -356,6 +366,13 @@
               <span class="slider-toggle round"></span>
             </label>
           </div>
+        </div>
+
+        <!-- Global UI Scale Slider -->
+        <div class="form-group">
+          <label for="input-scale">Global UI Scale (<span id="scale-val">100</span>%)</label>
+          <input type="range" id="input-scale" name="uiScale" min="75" max="125" step="1" value="100" class="slider">
+          <span class="field-hint">Proportionally scale interface controls, shortcuts, search bar, and clock (75% – 125%)</span>
         </div>
 
         <!-- Dim & Vignette Sliders -->
