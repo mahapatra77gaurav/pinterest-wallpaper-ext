@@ -40,6 +40,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep message port open for async sendResponse
   }
 
+  // Google Search Autocomplete Suggestions
+  if (message.type === 'FETCH_GOOGLE_SUGGESTIONS' && message.query) {
+    fetch(`https://suggestqueries.google.com/complete/search?client=chrome&q=${encodeURIComponent(message.query)}`)
+      .then(async (response) => {
+        if (!response.ok) {
+          sendResponse({ success: false, error: `HTTP ${response.status}` });
+          return;
+        }
+        const data = await response.json();
+        sendResponse({
+          success: true,
+          data: Array.isArray(data) && Array.isArray(data[1]) ? data[1].slice(0, 7) : []
+        });
+      })
+      .catch((err) => {
+        sendResponse({ success: false, error: err.message });
+      });
+
+    return true;
+  }
+
   // Single-page Search Pagination
   if (message.type === 'FETCH_PINTEREST_SEARCH_PAGE' && message.query) {
     fetchSearchSinglePage(message.query, message.bookmark || null)

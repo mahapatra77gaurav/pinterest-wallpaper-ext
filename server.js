@@ -12,7 +12,31 @@ const mimeTypes = {
   '.svg': 'image/svg+xml'
 };
 
+const https = require('https');
+
 const server = http.createServer((req, res) => {
+  if (req.url.startsWith('/api/suggest')) {
+    const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost:3456'}`);
+    const query = urlObj.searchParams.get('q') || '';
+    const suggestUrl = `https://suggestqueries.google.com/complete/search?client=chrome&q=${encodeURIComponent(query)}`;
+    
+    https.get(suggestUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (apiRes) => {
+      let data = '';
+      apiRes.on('data', chunk => data += chunk);
+      apiRes.on('end', () => {
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        });
+        res.end(data);
+      });
+    }).on('error', (err) => {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify([query, []]));
+    });
+    return;
+  }
+
   let filePath = path.join(__dirname, req.url === '/' ? 'newtab.html' : req.url.split('?')[0]);
   const ext = path.extname(filePath);
   const contentType = mimeTypes[ext] || 'text/plain';

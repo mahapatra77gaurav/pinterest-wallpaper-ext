@@ -15,7 +15,8 @@
     "https://in.pinterest.com/*",
     "https://www.pinterest.com/*",
     "https://*.pinimg.com/*",
-    "https://pinimg.com/*"
+    "https://pinimg.com/*",
+    "https://suggestqueries.google.com/*"
   ],
   "background": {
     "service_worker": "background.js"

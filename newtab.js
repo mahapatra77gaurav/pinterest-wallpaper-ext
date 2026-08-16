@@ -103,6 +103,8 @@ const elements = {
   closeModalBtn: document.getElementById('close-modal-btn'),
   cancelBtn: document.getElementById('cancel-btn'),
   resetBtn: document.getElementById('reset-btn'),
+  refreshFeedBtn: document.getElementById('refresh-feed-btn'),
+  saveBtn: document.getElementById('save-btn'),
   settingsForm: document.getElementById('settings-form'),
   
   // Settings Form Inputs
@@ -137,11 +139,14 @@ const elements = {
   inputBlur: document.getElementById('input-blur'),
   dimVal: document.getElementById('dim-val'),
   blurVal: document.getElementById('blur-val'),
+  statusMsg: document.getElementById('status-msg'),
+  statusIcon: document.getElementById('status-icon'),
   presetChips: document.querySelectorAll('.preset-chip'),
   searchChips: document.querySelectorAll('.search-chip'),
   toast: document.getElementById('toast'),
   searchForm: document.getElementById('search-form'),
   searchInput: document.getElementById('search-input'),
+  searchSuggestions: document.getElementById('search-suggestions'),
 
   // Add Shortcut Dialog
   addShortcutDialog: document.getElementById('add-shortcut-dialog'),
@@ -153,18 +158,65 @@ const elements = {
 };
 
 // =============================================================================
-// Instant First-Paint (Cold-Start Cache Engine)
+// Instant First-Paint (Cold-Start Cache Engine & Persistent Rotation Store)
 // =============================================================================
 
 /**
- * Retrieves saved custom rotation angle for a wallpaper if present in user_image_rotations store
+ * Normalizes an image URL or wallpaper object into a stable unique key (extracts Pinterest image hash / Unsplash ID)
+ */
+function getImageKey(wallpaperOrUrl) {
+  if (!wallpaperOrUrl) return '';
+  const url = typeof wallpaperOrUrl === 'string' ? wallpaperOrUrl : (wallpaperOrUrl.url || wallpaperOrUrl.resolvedUrl || wallpaperOrUrl.fallbackUrl || '');
+  if (!url) return '';
+  
+  // Pinterest image hash: match /originals/hash.ext or /736x/hash.ext
+  const pinMatch = url.match(/pinimg\.com\/(?:originals|\d+x|\d+x\d*)\/([a-f0-9\/]+?)(?:\.[a-z0-9]+)?(?:$|\?)/i);
+  if (pinMatch) {
+    return `pin_${pinMatch[1]}`;
+  }
+  
+  // Unsplash photo id
+  const unsplashMatch = url.match(/unsplash\.com\/photo-([a-zA-Z0-9_-]+)/i);
+  if (unsplashMatch) {
+    return `unsplash_${unsplashMatch[1]}`;
+  }
+
+  // Base64 local image or direct URL
+  if (url.startsWith('data:')) {
+    return `local_${url.substring(0, 40)}`;
+  }
+
+  return url;
+}
+
+/**
+ * Retrieves saved custom rotation angle for a wallpaper from persistent store
  */
 function getSavedRotation(wallpaper) {
   if (!wallpaper) return undefined;
   const store = appState.userImageRotations || appState.rotations || {};
-  if (wallpaper.url && store[wallpaper.url] !== undefined) return store[wallpaper.url];
-  if (wallpaper.fallbackUrl && store[wallpaper.fallbackUrl] !== undefined) return store[wallpaper.fallbackUrl];
-  if (wallpaper.id && store[wallpaper.id] !== undefined) return store[wallpaper.id];
+  
+  // Direct object property priority
+  if (typeof wallpaper.manualRotation === 'number') return wallpaper.manualRotation;
+  
+  const keys = [
+    getImageKey(wallpaper),
+    wallpaper.url,
+    wallpaper.resolvedUrl,
+    wallpaper.fallbackUrl,
+    wallpaper.id,
+    wallpaper.link,
+    getImageKey(wallpaper.url),
+    getImageKey(wallpaper.resolvedUrl),
+    getImageKey(wallpaper.fallbackUrl)
+  ];
+
+  for (const k of keys) {
+    if (k && store[k] !== undefined) {
+      return store[k];
+    }
+  }
+
   return undefined;
 }
 
@@ -250,7 +302,7 @@ function saveActiveWallpaperToColdStart(wallpaper) {
   const payload = {
     id: wallpaper.id || null,
     title: wallpaper.title || 'Wallpaper',
-    url: wallpaper.url,
+    url: wallpaper.resolvedUrl || wallpaper.url,
     fallbackUrl: wallpaper.fallbackUrl || wallpaper.url,
     link: wallpaper.link || '#',
     rotation: rotation
@@ -277,7 +329,7 @@ function saveNextColdStartWallpaper(wallpaper) {
   const payload = {
     id: wallpaper.id || null,
     title: wallpaper.title || 'Wallpaper',
-    url: wallpaper.url,
+    url: wallpaper.resolvedUrl || wallpaper.url,
     fallbackUrl: wallpaper.fallbackUrl || wallpaper.url,
     link: wallpaper.link || '#',
     rotation: rotation
@@ -293,25 +345,37 @@ function saveNextColdStartWallpaper(wallpaper) {
 }
 
 /**
- * Persists custom rotation angle mapped to a specific image URL or ID in permanent store
+ * Persists custom rotation angle mapped to a specific image across all its URL aliases & hash
  */
 function saveRotationForUrl(url, degrees, wallpaper = null) {
   if (!url && (!wallpaper || !wallpaper.url)) return;
-  const targetUrl = url || wallpaper.url;
-
-  appState.rotations[targetUrl] = degrees;
-  appState.userImageRotations[targetUrl] = degrees;
+  const targetUrl = url || wallpaper?.url;
 
   if (wallpaper) {
-    if (wallpaper.fallbackUrl) {
-      appState.rotations[wallpaper.fallbackUrl] = degrees;
-      appState.userImageRotations[wallpaper.fallbackUrl] = degrees;
-    }
-    if (wallpaper.id) {
-      appState.rotations[wallpaper.id] = degrees;
-      appState.userImageRotations[wallpaper.id] = degrees;
-    }
+    wallpaper.manualRotation = degrees;
+    wallpaper.rotation = degrees;
   }
+
+  const keys = [
+    targetUrl,
+    wallpaper?.url,
+    wallpaper?.resolvedUrl,
+    wallpaper?.fallbackUrl,
+    wallpaper?.id,
+    wallpaper?.link,
+    getImageKey(wallpaper || targetUrl),
+    getImageKey(targetUrl),
+    getImageKey(wallpaper?.url),
+    getImageKey(wallpaper?.resolvedUrl),
+    getImageKey(wallpaper?.fallbackUrl)
+  ];
+
+  keys.forEach(k => {
+    if (k) {
+      appState.rotations[k] = degrees;
+      appState.userImageRotations[k] = degrees;
+    }
+  });
 
   try {
     localStorage.setItem('user_image_rotations', JSON.stringify(appState.userImageRotations));
@@ -395,6 +459,7 @@ async function loadConfig() {
         if (result && (result.uiScale !== undefined || result.ui_scale !== undefined)) {
           loaded.uiScale = parseInt(result.uiScale ?? result.ui_scale, 10) || 100;
         }
+        loaded.interval = Math.max(5, parseInt(loaded.interval, 10) || 30);
         resolve(loaded);
       });
     } else {
@@ -408,6 +473,7 @@ async function loadConfig() {
         if (savedSearch) loaded.searchQuery = savedSearch;
         if (savedName) loaded.displayName = savedName;
         if (savedScale) loaded.uiScale = parseInt(savedScale, 10) || 100;
+        loaded.interval = Math.max(5, parseInt(loaded.interval, 10) || 30);
         resolve(loaded);
       } catch (e) {
         resolve({ ...DEFAULT_CONFIG });
@@ -614,6 +680,85 @@ async function saveUserShortcuts(shortcutsList) {
   });
 }
 
+let draggedShortcutIndex = null;
+let isDraggingActive = false;
+
+function clearAllDragIndicators() {
+  if (elements.shortcuts) {
+    elements.shortcuts.classList.remove('is-dragging');
+    const cards = elements.shortcuts.querySelectorAll('.shortcut-card');
+    cards.forEach(c => c.classList.remove('dragging', 'drag-over'));
+  }
+}
+
+function setupShortcutDragAndDrop(link, index) {
+  link.setAttribute('draggable', 'true');
+  link.dataset.index = index;
+
+  link.addEventListener('dragstart', (e) => {
+    draggedShortcutIndex = index;
+    isDraggingActive = true;
+    link.classList.add('dragging');
+    if (elements.shortcuts) elements.shortcuts.classList.add('is-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  });
+
+  link.addEventListener('dragend', () => {
+    link.classList.remove('dragging');
+    clearAllDragIndicators();
+    setTimeout(() => {
+      isDraggingActive = false;
+      draggedShortcutIndex = null;
+    }, 100);
+  });
+
+  link.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    if (draggedShortcutIndex === null || draggedShortcutIndex === index) {
+      link.classList.remove('drag-over');
+      return;
+    }
+
+    link.classList.add('drag-over');
+  });
+
+  link.addEventListener('dragleave', (e) => {
+    // Only remove if leaving the card entirely
+    if (!link.contains(e.relatedTarget)) {
+      link.classList.remove('drag-over');
+    }
+  });
+
+  link.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const fromIdx = draggedShortcutIndex !== null ? draggedShortcutIndex : parseInt(e.dataTransfer.getData('text/plain'), 10);
+    clearAllDragIndicators();
+
+    if (isNaN(fromIdx) || fromIdx === index || fromIdx < 0 || fromIdx >= appState.userShortcuts.length) {
+      return;
+    }
+
+    const list = [...appState.userShortcuts];
+    const [item] = list.splice(fromIdx, 1);
+    list.splice(index, 0, item);
+
+    await saveUserShortcuts(list);
+    renderShortcuts();
+  });
+
+  link.addEventListener('click', (e) => {
+    if (isDraggingActive) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
+}
+
 function renderShortcuts() {
   if (!elements.shortcuts) return;
   elements.shortcuts.innerHTML = '';
@@ -632,11 +777,14 @@ function renderShortcuts() {
     link.title = `${title} (${site.url})`;
     link.setAttribute('aria-label', title);
 
+    setupShortcutDragAndDrop(link, index);
+
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'shortcut-delete-btn';
     deleteBtn.type = 'button';
     deleteBtn.title = `Delete ${title}`;
     deleteBtn.setAttribute('aria-label', `Delete ${title}`);
+    deleteBtn.setAttribute('draggable', 'false');
     deleteBtn.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -657,12 +805,14 @@ function renderShortcuts() {
     img.src = faviconUrl;
     img.alt = title;
     img.loading = 'lazy';
+    img.setAttribute('draggable', 'false');
 
     img.onerror = () => {
       img.remove();
       const letter = document.createElement('span');
       letter.className = 'shortcut-letter-avatar';
       letter.textContent = initial;
+      letter.setAttribute('draggable', 'false');
       iconBox.appendChild(letter);
     };
 
@@ -813,45 +963,50 @@ function upgradePinterestImageUrl(rawUrl) {
 }
 
 /**
- * Generates preferred high-res resolution candidates with automatic fallback (/originals/ -> /1200x/ -> /736x/)
+ * Generates preferred high-res resolution candidates with prioritized working URLs
  */
 function getCandidateUrls(wallpaper) {
   const candidates = [];
   if (!wallpaper || !wallpaper.url) return candidates;
 
-  const upgraded = upgradePinterestImageUrl(wallpaper.url) || wallpaper.url;
-  candidates.push(upgraded);
+  // 1. Prioritize already resolved working URL from past load
+  if (wallpaper.resolvedUrl && !candidates.includes(wallpaper.resolvedUrl)) {
+    candidates.push(wallpaper.resolvedUrl);
+  }
 
-  // If it's a pinterest image URL, construct high-res /1200x/ and /736x/ fallbacks
-  if (upgraded.includes('pinimg.com/')) {
-    const url1200 = upgraded.replace(/\/(?:originals|236x|474x|564x|736x|1200x|\d+x\d*|\d+x)\//gi, '/1200x/');
-    const url736 = upgraded.replace(/\/(?:originals|236x|474x|564x|736x|1200x|\d+x\d*|\d+x)\//gi, '/736x/');
-    if (url1200 !== upgraded && !candidates.includes(url1200)) candidates.push(url1200);
-    if (url736 !== upgraded && !candidates.includes(url736)) candidates.push(url736);
+  // 2. The primary URL assigned to wallpaper
+  if (wallpaper.url && !candidates.includes(wallpaper.url)) {
+    candidates.push(wallpaper.url);
+  }
+
+  // 3. If it's a Pinterest image, include alternatives
+  if (wallpaper.url.includes('pinimg.com/')) {
+    const orig = wallpaper.url.replace(/\/(?:236x|474x|564x|736x|1200x|\d+x)\//gi, '/originals/');
+    const url1200 = wallpaper.url.replace(/\/(?:originals|236x|474x|564x|736x|\d+x)\//gi, '/1200x/');
+    const url736 = wallpaper.url.replace(/\/(?:originals|236x|474x|564x|1200x|\d+x)\//gi, '/736x/');
+    if (orig && !candidates.includes(orig)) candidates.push(orig);
+    if (url1200 && !candidates.includes(url1200)) candidates.push(url1200);
+    if (url736 && !candidates.includes(url736)) candidates.push(url736);
   }
 
   if (wallpaper.fallbackUrl && !candidates.includes(wallpaper.fallbackUrl)) {
     candidates.push(wallpaper.fallbackUrl);
-  }
-  if (wallpaper.url !== upgraded && !candidates.includes(wallpaper.url)) {
-    candidates.push(wallpaper.url);
   }
 
   return candidates;
 }
 
 /**
- * Dimension & Quality Gate: enforces minimum 1280px effective landscape width and 0.9 Megapixels
+ * Dimension & Quality Gate: ensures crisp full-sized images and drops micro-thumbnails
  */
 function isHighResWallpaper(width, height, isPortrait = false) {
   if (!width || !height || width <= 0 || height <= 0) return false;
   const totalPixels = width * height;
-  
-  // Calculate effective landscape width (factoring in rotation if portrait)
-  const effectiveLandscapeWidth = (appState.config.autoRotate && isPortrait) ? Math.max(width, height) : width;
+  const maxDim = Math.max(width, height);
+  const minDim = Math.min(width, height);
 
-  // Quality Threshold: effective width >= 1280px AND total resolution >= 0.9 Megapixels (900,000 px)
-  if (effectiveLandscapeWidth < 1280 || totalPixels < 900000) {
+  // Reject tiny icons, avatars, and low-res thumbnails (< 400px min dimension or < 350k total pixels)
+  if (minDim < 400 || maxDim < 700 || totalPixels < 350000) {
     return false;
   }
   return true;
@@ -1572,7 +1727,7 @@ function rotateActiveWallpaper() {
 }
 
 /**
- * Preloads candidate URLs with high-res quality gate (>=1280px landscape width, >=0.9MP) and per-candidate timeout
+ * Preloads candidate URLs with high-res quality gate and fast 1200ms timeout per candidate
  */
 function preloadImage(wallpaper) {
   if (!wallpaper) {
@@ -1598,7 +1753,7 @@ function preloadImage(wallpaper) {
       if (savedRot !== undefined) {
         wallpaper.manualRotation = savedRot;
         wallpaper.rotation = savedRot;
-      } else if (wallpaper.manualRotation !== undefined) {
+      } else if (typeof wallpaper.manualRotation === 'number') {
         wallpaper.rotation = wallpaper.manualRotation;
       } else {
         let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
@@ -1610,7 +1765,7 @@ function preloadImage(wallpaper) {
     }
   }
 
-  // Sequentially attempt candidates: /originals/ -> /1200x/ -> /736x/ with fast 2500ms timeout per candidate
+  // Sequentially attempt candidates with fast 1200ms timeout per candidate
   return new Promise(async (resolve) => {
     for (const url of candidates) {
       const candidateResult = await new Promise((resCandidate) => {
@@ -1622,7 +1777,7 @@ function preloadImage(wallpaper) {
             img.src = '';
             resCandidate(null);
           }
-        }, 2500);
+        }, 1200);
 
         img.onload = () => {
           if (settled) return;
@@ -1633,9 +1788,8 @@ function preloadImage(wallpaper) {
           const height = img.naturalHeight || img.height || 0;
           const isPortrait = height > width;
 
-          // Quality Gate: verify resolution threshold (effective width >= 1280px & >= 0.9MP)
+          // Quality Gate: verify resolution threshold
           if (!isHighResWallpaper(width, height, isPortrait)) {
-            console.warn(`[QualityGate] Dropping low-res candidate (${width}x${height}, ${(width * height / 1e6).toFixed(2)}MP): ${url}`);
             resCandidate(null);
             return;
           }
@@ -1645,10 +1799,11 @@ function preloadImage(wallpaper) {
           wallpaper.isPortrait = isPortrait;
           wallpaper.resolvedUrl = url;
 
-          if (savedRot !== undefined) {
-            wallpaper.manualRotation = savedRot;
-            wallpaper.rotation = savedRot;
-          } else if (wallpaper.manualRotation !== undefined) {
+          const currentSavedRot = getSavedRotation(wallpaper);
+          if (currentSavedRot !== undefined) {
+            wallpaper.manualRotation = currentSavedRot;
+            wallpaper.rotation = currentSavedRot;
+          } else if (typeof wallpaper.manualRotation === 'number') {
             wallpaper.rotation = wallpaper.manualRotation;
           } else {
             let baseRotation = (appState.config.autoRotate && isPortrait) ? 270 : 0;
@@ -1659,8 +1814,8 @@ function preloadImage(wallpaper) {
             img.decode().catch(() => {});
           }
 
-          // Keep cache bounded to 6 active images
-          if (appState.preloadedCache.size >= 6) {
+          // Keep cache bounded to 10 active images
+          if (appState.preloadedCache.size >= 10) {
             const oldestKey = appState.preloadedCache.keys().next().value;
             appState.preloadedCache.delete(oldestKey);
           }
@@ -1690,15 +1845,28 @@ function preloadImage(wallpaper) {
 }
 
 /**
+ * Sliding-Window Buffer Preloader: Preloads next 3 images and previous 1 image into memory
+ * so every arrow navigation click renders instantly with 0ms delay
+ */
+function preloadBufferWindow() {
+  if (!appState.wallpapers || appState.wallpapers.length <= 1) return;
+  const total = appState.wallpapers.length;
+
+  const offsets = [1, 2, 3, -1];
+  for (const offset of offsets) {
+    const targetIdx = (((appState.currentIndex + offset) % total) + total) % total;
+    const item = appState.wallpapers[targetIdx];
+    if (item && !appState.preloadedCache.has(item.resolvedUrl || item.url)) {
+      preloadImage(item).catch(() => {});
+    }
+  }
+}
+
+/**
  * Lazy loads and decodes the NEXT upcoming image into memory buffer 3-5 seconds ahead
  */
 function preloadNextImmediateImage() {
-  if (appState.wallpapers.length <= 1) return;
-  const nextIdx = (appState.currentIndex + 1) % appState.wallpapers.length;
-  const nextItem = appState.wallpapers[nextIdx];
-  if (nextItem && !appState.preloadedCache.has(nextItem.url)) {
-    preloadImage(nextItem);
-  }
+  preloadBufferWindow();
 }
 
 /**
@@ -1835,8 +2003,8 @@ async function displayWallpaper(startIndex, directionOrManual = 1, manual = fals
       fetchNextBatch();
     }
 
-    // Lazy Preload NEXT image into memory for zero-flash transition
-    preloadNextImmediateImage();
+    // Sliding-Window Buffer Preload: buffer surrounding wallpapers for 0ms arrow clicks
+    preloadBufferWindow();
 
     if (isManual) {
       resetCycleTimer();
@@ -1891,28 +2059,34 @@ function prevWallpaper(manual = true) {
 
 function startCycleTimer() {
   stopCycleTimer();
-  if (appState.isPaused || appState.wallpapers.length <= 1) return;
+  if (appState.isPaused || !appState.wallpapers || appState.wallpapers.length <= 1) return;
 
-  const intervalMs = Math.max(5, appState.config.interval || 30) * 1000;
+  const intervalSec = parseInt(appState.config.interval, 10) || 30;
+  const intervalMs = Math.max(5, intervalSec) * 1000;
   
-  // Preload next image 3.5 seconds before next cycle
+  // Preload next image before timer completes
   const preloadAdvanceMs = Math.max(1000, intervalMs - 3500);
   appState.preloadTimer = setTimeout(() => {
     preloadNextImmediateImage();
   }, preloadAdvanceMs);
 
-  appState.cycleTimer = setInterval(() => {
-    nextWallpaper(false);
+  appState.cycleTimer = setTimeout(async () => {
+    await nextWallpaper(false);
+    if (!appState.isPaused) {
+      startCycleTimer();
+    }
   }, intervalMs);
 }
 
 function stopCycleTimer() {
   if (appState.cycleTimer) {
+    clearTimeout(appState.cycleTimer);
     clearInterval(appState.cycleTimer);
     appState.cycleTimer = null;
   }
   if (appState.preloadTimer) {
     clearTimeout(appState.preloadTimer);
+    clearInterval(appState.preloadTimer);
     appState.preloadTimer = null;
   }
 }
@@ -2164,8 +2338,8 @@ function updateFormVisibility(mode) {
 }
 
 function applyVisualSettings() {
-  const dim = appState.config.dim ?? 25;
-  const blur = appState.config.blur ?? 0;
+  const dim = 25;
+  const blur = 0;
   const fitMode = appState.config.fitMode || 'cover';
   const uiScale = appState.config.uiScale ?? 100;
   const scaleFactor = uiScale / 100;
@@ -2178,8 +2352,6 @@ function applyVisualSettings() {
   document.body.classList.remove('fit-cover', 'fit-contain', 'fit-auto');
   document.body.classList.add(`fit-${fitMode}`);
   
-  if (elements.dimVal) elements.dimVal.textContent = dim;
-  if (elements.blurVal) elements.blurVal.textContent = blur;
   if (elements.scaleVal) elements.scaleVal.textContent = uiScale;
   if (elements.inputScale) elements.inputScale.value = uiScale;
 }
@@ -2203,8 +2375,10 @@ function openSettingsModal() {
   }
 
   const mode = appState.config.sourceMode || 'pinterest-search';
-  elements.selectSourceMode.value = mode;
-  updateFormVisibility(mode);
+  if (elements.selectSourceMode) {
+    elements.selectSourceMode.value = mode;
+    updateFormVisibility(mode);
+  }
 
   if (elements.selectFitMode) {
     elements.selectFitMode.value = appState.config.fitMode || 'cover';
@@ -2218,11 +2392,11 @@ function openSettingsModal() {
     elements.inputSearchQuery.value = appState.config.searchQuery || '4k dark cyberpunk wallpaper';
   }
 
-  elements.inputUsername.value = appState.config.username || 'pinterest';
-  elements.inputBoard.value = appState.config.board || 'wallpapers';
-  elements.inputDirectUrl.value = appState.config.directUrl || '';
-  elements.inputInterval.value = appState.config.interval || 30;
-  elements.inputTimeFormat.value = appState.config.timeFormat || '12h';
+  if (elements.inputUsername) elements.inputUsername.value = appState.config.username || 'pinterest';
+  if (elements.inputBoard) elements.inputBoard.value = appState.config.board || 'wallpapers';
+  if (elements.inputDirectUrl) elements.inputDirectUrl.value = appState.config.directUrl || '';
+  if (elements.inputInterval) elements.inputInterval.value = appState.config.interval || 30;
+  if (elements.inputTimeFormat) elements.inputTimeFormat.value = appState.config.timeFormat || '12h';
   
   if (elements.inputScale) {
     elements.inputScale.value = appState.config.uiScale ?? 100;
@@ -2230,17 +2404,16 @@ function openSettingsModal() {
   if (elements.scaleVal) {
     elements.scaleVal.textContent = appState.config.uiScale ?? 100;
   }
-
-  elements.inputDim.value = appState.config.dim ?? 25;
-  elements.inputBlur.value = appState.config.blur ?? 0;
   
   // Local preview
-  if (appState.config.localImageBase64) {
-    elements.localPreviewImg.src = appState.config.localImageBase64;
-    elements.localPreviewName.textContent = appState.config.localImageName || 'Stored Image';
-    elements.localPreviewContainer.classList.remove('hidden');
-  } else {
-    elements.localPreviewContainer.classList.add('hidden');
+  if (elements.localPreviewImg && elements.localPreviewName && elements.localPreviewContainer) {
+    if (appState.config.localImageBase64) {
+      elements.localPreviewImg.src = appState.config.localImageBase64;
+      elements.localPreviewName.textContent = appState.config.localImageName || 'Stored Image';
+      elements.localPreviewContainer.classList.remove('hidden');
+    } else {
+      elements.localPreviewContainer.classList.add('hidden');
+    }
   }
 
   appState.pendingLocalBase64 = null;
@@ -2251,7 +2424,9 @@ function openSettingsModal() {
 }
 
 function closeSettingsModal() {
-  elements.settingsDialog.close();
+  if (elements.settingsDialog) {
+    elements.settingsDialog.close();
+  }
 }
 
 function showToast(message) {
@@ -2281,10 +2456,10 @@ function handleLocalFileUpload(file) {
     appState.pendingLocalBase64 = base64;
     appState.pendingLocalName = file.name;
 
-    elements.localPreviewImg.src = base64;
-    elements.localPreviewName.textContent = `${file.name} (${Math.round(file.size / 1024)} KB)`;
-    elements.localPreviewContainer.classList.remove('hidden');
-    elements.fileUploadText.textContent = `Selected: ${file.name}`;
+    if (elements.localPreviewImg) elements.localPreviewImg.src = base64;
+    if (elements.localPreviewName) elements.localPreviewName.textContent = `${file.name} (${Math.round(file.size / 1024)} KB)`;
+    if (elements.localPreviewContainer) elements.localPreviewContainer.classList.remove('hidden');
+    if (elements.fileUploadText) elements.fileUploadText.textContent = `Selected: ${file.name}`;
     showToast(`Loaded "${file.name}"`);
   };
 
@@ -2296,6 +2471,211 @@ function handleLocalFileUpload(file) {
 }
 
 // =============================================================================
+// Search Bar Autofocus, Real-Time Google Autocomplete & URL Navigation
+// =============================================================================
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+const searchAutocompleteState = {
+  debounceTimer: null,
+  abortController: null,
+  originalInputQuery: '',
+  suggestions: [],
+  selectedIndex: -1,
+  isOpen: false
+};
+
+function focusSearchInput(selectAll = false) {
+  if (elements.searchInput && !elements.settingsDialog?.open && !elements.addShortcutDialog?.open) {
+    elements.searchInput.focus();
+    if (selectAll && elements.searchInput.value) {
+      elements.searchInput.select();
+    }
+  }
+}
+
+function executeSearchOrNavigate(rawQuery) {
+  const query = (rawQuery || '').trim();
+  if (!query) return;
+
+  hideSearchSuggestions();
+
+  const isFullUrl = /^https?:\/\//i.test(query) || /^file:\/\//i.test(query);
+  const isDomainLike = /^(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,})(?::\d+)?(?:\/.*)?$/i.test(query);
+
+  if (isFullUrl) {
+    window.location.href = query;
+  } else if (isDomainLike && !query.includes(' ')) {
+    window.location.href = 'https://' + query;
+  } else {
+    window.location.href = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+  }
+}
+
+async function fetchGoogleSuggestions(query) {
+  if (searchAutocompleteState.abortController) {
+    searchAutocompleteState.abortController.abort();
+  }
+  searchAutocompleteState.abortController = new AbortController();
+
+  // 1. Try Chrome background service worker if running as extension
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    try {
+      const resp = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'FETCH_GOOGLE_SUGGESTIONS', query }, (res) => {
+          if (chrome.runtime.lastError || !res || !res.success) {
+            resolve(null);
+          } else {
+            resolve(res.data);
+          }
+        });
+      });
+      if (Array.isArray(resp)) return resp;
+    } catch (e) {
+      // Fall through to HTTP fetch
+    }
+  }
+
+  // 2. Try localhost proxy endpoint if running locally in dev mode
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    try {
+      const response = await fetch(`/api/suggest?q=${encodeURIComponent(query)}`, {
+        signal: searchAutocompleteState.abortController.signal
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data) && Array.isArray(data[1])) {
+          return data[1].slice(0, 6);
+        }
+      }
+    } catch (e) {
+      if (e.name === 'AbortError') return null;
+    }
+  }
+
+  // 3. Direct public endpoint (enabled by host_permissions in extension context)
+  const url = `https://suggestqueries.google.com/complete/search?client=chrome&q=${encodeURIComponent(query)}`;
+
+  try {
+    const response = await fetch(url, {
+      signal: searchAutocompleteState.abortController.signal
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (Array.isArray(data) && Array.isArray(data[1])) {
+      return data[1].slice(0, 6);
+    }
+    return [];
+  } catch (err) {
+    if (err.name === 'AbortError') return null;
+    return [];
+  }
+}
+
+function renderSearchSuggestions(suggestions, query) {
+  if (!elements.searchSuggestions) return;
+
+  if (!suggestions || suggestions.length === 0) {
+    hideSearchSuggestions();
+    return;
+  }
+
+  searchAutocompleteState.suggestions = suggestions;
+  searchAutocompleteState.selectedIndex = -1;
+  searchAutocompleteState.isOpen = true;
+
+  elements.searchSuggestions.innerHTML = '';
+
+  suggestions.forEach((item, index) => {
+    const el = document.createElement('div');
+    el.className = 'suggestion-item';
+    el.setAttribute('role', 'option');
+    el.setAttribute('data-index', index);
+    el.id = `suggestion-item-${index}`;
+
+    // Bold highlight matching initial part
+    const lowerQuery = query.toLowerCase();
+    const lowerItem = item.toLowerCase();
+    let textHtml = '';
+
+    if (lowerItem.startsWith(lowerQuery)) {
+      const matchPart = item.substring(0, query.length);
+      const restPart = item.substring(query.length);
+      textHtml = `<span class="suggestion-match">${escapeHtml(matchPart)}</span>${escapeHtml(restPart)}`;
+    } else {
+      textHtml = escapeHtml(item);
+    }
+
+    el.innerHTML = `
+      <svg class="suggestion-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <span class="suggestion-text">${textHtml}</span>
+      <svg class="suggestion-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="7" y1="17" x2="17" y2="7"></line>
+        <polyline points="7 7 17 7 17 17"></polyline>
+      </svg>
+    `;
+
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      elements.searchInput.value = item;
+      executeSearchOrNavigate(item);
+    });
+
+    el.addEventListener('mouseenter', () => {
+      setHighlightedSuggestion(index, false);
+    });
+
+    elements.searchSuggestions.appendChild(el);
+  });
+
+  elements.searchSuggestions.classList.remove('hidden');
+}
+
+function hideSearchSuggestions() {
+  if (elements.searchSuggestions) {
+    elements.searchSuggestions.classList.add('hidden');
+    elements.searchSuggestions.innerHTML = '';
+  }
+  searchAutocompleteState.suggestions = [];
+  searchAutocompleteState.selectedIndex = -1;
+  searchAutocompleteState.isOpen = false;
+}
+
+function setHighlightedSuggestion(index, updateInput = true) {
+  if (!elements.searchSuggestions) return;
+  const items = elements.searchSuggestions.querySelectorAll('.suggestion-item');
+  items.forEach((item, i) => {
+    if (i === index) {
+      item.classList.add('selected');
+      item.scrollIntoView({ block: 'nearest' });
+    } else {
+      item.classList.remove('selected');
+    }
+  });
+
+  searchAutocompleteState.selectedIndex = index;
+
+  if (updateInput && elements.searchInput) {
+    if (index >= 0 && index < searchAutocompleteState.suggestions.length) {
+      elements.searchInput.value = searchAutocompleteState.suggestions[index];
+    } else {
+      elements.searchInput.value = searchAutocompleteState.originalInputQuery;
+    }
+  }
+}
+
+// =============================================================================
 // Event Listeners & Bootstrapping
 // =============================================================================
 
@@ -2304,26 +2684,105 @@ function setupEventListeners() {
   if (elements.searchForm) {
     elements.searchForm.addEventListener('submit', (e) => {
       e.preventDefault();
-      const rawQuery = (elements.searchInput?.value || '').trim();
-      if (!rawQuery) return;
+      executeSearchOrNavigate(elements.searchInput?.value);
+    });
+  }
 
-      const isFullUrl = /^https?:\/\//i.test(rawQuery) || /^file:\/\//i.test(rawQuery);
-      const isDomainLike = /^(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,})(?::\d+)?(?:\/.*)?$/i.test(rawQuery);
+  // Real-Time Search Suggestions & Keyboard Traversal
+  if (elements.searchInput) {
+    elements.searchInput.addEventListener('input', (e) => {
+      const query = e.target.value;
+      searchAutocompleteState.originalInputQuery = query;
 
-      if (isFullUrl) {
-        window.location.href = rawQuery;
-      } else if (isDomainLike && !rawQuery.includes(' ')) {
-        window.location.href = 'https://' + rawQuery;
-      } else {
-        window.location.href = `https://www.google.com/search?q=${encodeURIComponent(rawQuery)}`;
+      clearTimeout(searchAutocompleteState.debounceTimer);
+
+      if (!query.trim()) {
+        hideSearchSuggestions();
+        return;
+      }
+
+      searchAutocompleteState.debounceTimer = setTimeout(async () => {
+        const results = await fetchGoogleSuggestions(query.trim());
+        if (results !== null) {
+          renderSearchSuggestions(results, query.trim());
+        }
+      }, 150);
+    });
+
+    elements.searchInput.addEventListener('keydown', (e) => {
+      if (!searchAutocompleteState.isOpen || searchAutocompleteState.suggestions.length === 0) {
+        if (e.key === 'Escape') {
+          hideSearchSuggestions();
+        }
+        return;
+      }
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const total = searchAutocompleteState.suggestions.length;
+        let nextIndex = searchAutocompleteState.selectedIndex + 1;
+        if (nextIndex >= total) {
+          nextIndex = -1;
+        }
+        setHighlightedSuggestion(nextIndex, true);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const total = searchAutocompleteState.suggestions.length;
+        let prevIndex = searchAutocompleteState.selectedIndex - 1;
+        if (prevIndex < -1) {
+          prevIndex = total - 1;
+        }
+        setHighlightedSuggestion(prevIndex, true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        hideSearchSuggestions();
+      }
+    });
+
+    elements.searchInput.addEventListener('blur', () => {
+      setTimeout(() => {
+        hideSearchSuggestions();
+      }, 200);
+    });
+
+    elements.searchInput.addEventListener('focus', () => {
+      const q = (elements.searchInput.value || '').trim();
+      if (q && searchAutocompleteState.suggestions.length > 0) {
+        elements.searchSuggestions?.classList.remove('hidden');
       }
     });
   }
 
+  // Dismiss suggestions on click outside
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.search-container')) {
+      hideSearchSuggestions();
+    }
+  });
+
+  // Global typing autofocus: Route keystrokes directly to search input when idle
+  window.addEventListener('keydown', (e) => {
+    const isModalOpen = (elements.settingsDialog && elements.settingsDialog.open) ||
+                        (elements.addShortcutDialog && elements.addShortcutDialog.open);
+    if (isModalOpen) return;
+
+    const isFormElement = ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName);
+    if (isFormElement) return;
+
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (['ArrowLeft', 'ArrowRight', 'Space', 'r', 'R'].includes(e.key) || e.code === 'Space') return;
+
+    if (e.key && e.key.length === 1) {
+      if (elements.searchInput) {
+        elements.searchInput.focus();
+      }
+    }
+  });
+
   // Navigation Controls
-  elements.prevBtn.addEventListener('click', () => prevWallpaper(true));
-  elements.nextBtn.addEventListener('click', () => nextWallpaper(true));
-  elements.pauseBtn.addEventListener('click', togglePause);
+  if (elements.prevBtn) elements.prevBtn.addEventListener('click', () => prevWallpaper(true));
+  if (elements.nextBtn) elements.nextBtn.addEventListener('click', () => nextWallpaper(true));
+  if (elements.pauseBtn) elements.pauseBtn.addEventListener('click', togglePause);
 
   // Manual Orientation Rotate Button
   if (elements.rotateBtn) {
@@ -2331,72 +2790,84 @@ function setupEventListeners() {
   }
 
   // Settings Modal Open/Close
-  elements.settingsBtn.addEventListener('click', openSettingsModal);
-  elements.closeModalBtn.addEventListener('click', closeSettingsModal);
-  elements.cancelBtn.addEventListener('click', closeSettingsModal);
+  if (elements.settingsBtn) elements.settingsBtn.addEventListener('click', openSettingsModal);
+  if (elements.closeModalBtn) elements.closeModalBtn.addEventListener('click', closeSettingsModal);
+  if (elements.cancelBtn) elements.cancelBtn.addEventListener('click', closeSettingsModal);
 
   // Close Settings dialog on clicking backdrop
-  elements.settingsDialog.addEventListener('click', (e) => {
-    const rect = elements.settingsDialog.getBoundingClientRect();
-    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
-      closeSettingsModal();
-    }
-  });
+  if (elements.settingsDialog) {
+    elements.settingsDialog.addEventListener('click', (e) => {
+      const rect = elements.settingsDialog.getBoundingClientRect();
+      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+        closeSettingsModal();
+      }
+    });
+  }
 
   // Add Shortcut Dialog Modal Open/Close
-  elements.closeAddShortcutBtn.addEventListener('click', closeAddShortcutModal);
-  elements.cancelAddShortcutBtn.addEventListener('click', closeAddShortcutModal);
-  elements.addShortcutDialog.addEventListener('click', (e) => {
-    const rect = elements.addShortcutDialog.getBoundingClientRect();
-    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
-      closeAddShortcutModal();
-    }
-  });
+  if (elements.closeAddShortcutBtn) elements.closeAddShortcutBtn.addEventListener('click', closeAddShortcutModal);
+  if (elements.cancelAddShortcutBtn) elements.cancelAddShortcutBtn.addEventListener('click', closeAddShortcutModal);
+  if (elements.addShortcutDialog) {
+    elements.addShortcutDialog.addEventListener('click', (e) => {
+      const rect = elements.addShortcutDialog.getBoundingClientRect();
+      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+        closeAddShortcutModal();
+      }
+    });
+  }
 
   // Add Shortcut Form Submit
-  elements.addShortcutForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const title = elements.inputShortcutTitle.value;
-    const url = elements.inputShortcutUrl.value;
-    if (url.trim()) {
-      await addShortcut(title, url);
-      closeAddShortcutModal();
-    }
-  });
+  if (elements.addShortcutForm) {
+    elements.addShortcutForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const title = elements.inputShortcutTitle.value;
+      const url = elements.inputShortcutUrl.value;
+      if (url.trim()) {
+        await addShortcut(title, url);
+        closeAddShortcutModal();
+      }
+    });
+  }
 
   // Source Mode Selector Change
-  elements.selectSourceMode.addEventListener('change', (e) => {
-    updateFormVisibility(e.target.value);
-  });
+  if (elements.selectSourceMode) {
+    elements.selectSourceMode.addEventListener('change', (e) => {
+      updateFormVisibility(e.target.value);
+    });
+  }
 
   // Local File Upload Input & Drag-and-Drop
-  elements.inputLocalFile.addEventListener('change', (e) => {
-    if (e.target.files && e.target.files[0]) {
-      handleLocalFileUpload(e.target.files[0]);
-    }
-  });
-
-  ['dragenter', 'dragover'].forEach(eventName => {
-    elements.fileDropzone.addEventListener(eventName, (e) => {
-      e.preventDefault();
-      elements.fileDropzone.classList.add('dragover');
+  if (elements.inputLocalFile) {
+    elements.inputLocalFile.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handleLocalFileUpload(e.target.files[0]);
+      }
     });
-  });
+  }
 
-  ['dragleave', 'drop'].forEach(eventName => {
-    elements.fileDropzone.addEventListener(eventName, (e) => {
-      e.preventDefault();
-      elements.fileDropzone.classList.remove('dragover');
+  if (elements.fileDropzone) {
+    ['dragenter', 'dragover'].forEach(eventName => {
+      elements.fileDropzone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        elements.fileDropzone.classList.add('dragover');
+      });
     });
-  });
 
-  elements.fileDropzone.addEventListener('drop', (e) => {
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleLocalFileUpload(e.dataTransfer.files[0]);
-    }
-  });
+    ['dragleave', 'drop'].forEach(eventName => {
+      elements.fileDropzone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        elements.fileDropzone.classList.remove('dragover');
+      });
+    });
 
-  // Sliders Real-time input
+    elements.fileDropzone.addEventListener('drop', (e) => {
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        handleLocalFileUpload(e.dataTransfer.files[0]);
+      }
+    });
+  }
+
+  // UI Scale Slider Real-time input
   if (elements.inputScale) {
     elements.inputScale.addEventListener('input', (e) => {
       const val = parseInt(e.target.value, 10) || 100;
@@ -2405,137 +2876,196 @@ function setupEventListeners() {
     });
   }
 
-  elements.inputDim.addEventListener('input', (e) => {
-    const val = e.target.value;
-    elements.dimVal.textContent = val;
-    document.documentElement.style.setProperty('--dim-overlay', `rgba(0, 0, 0, ${val / 100})`);
-  });
-
-  elements.inputBlur.addEventListener('input', (e) => {
-    const val = e.target.value;
-    elements.blurVal.textContent = val;
-    document.documentElement.style.setProperty('--bg-blur-amount', `${val}px`);
-  });
-
   // Board Preset Chips
-  elements.presetChips.forEach((chip) => {
-    chip.addEventListener('click', () => {
-      elements.presetChips.forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
+  if (elements.presetChips) {
+    elements.presetChips.forEach((chip) => {
+      chip.addEventListener('click', () => {
+        elements.presetChips.forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
 
-      const user = chip.dataset.user;
-      const board = chip.dataset.board;
-      if (user) elements.inputUsername.value = user;
-      if (board) elements.inputBoard.value = board;
+        const user = chip.dataset.user;
+        const board = chip.dataset.board;
+        if (user && elements.inputUsername) elements.inputUsername.value = user;
+        if (board && elements.inputBoard) elements.inputBoard.value = board;
+      });
     });
-  });
+  }
 
   // Search Suggestion Chips
-  elements.searchChips.forEach((chip) => {
-    chip.addEventListener('click', () => {
-      elements.searchChips.forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
+  if (elements.searchChips) {
+    elements.searchChips.forEach((chip) => {
+      chip.addEventListener('click', () => {
+        elements.searchChips.forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
 
-      const query = chip.dataset.query;
-      if (query && elements.inputSearchQuery) {
-        elements.inputSearchQuery.value = query;
-        elements.inputSearchQuery.focus();
-      }
+        const query = chip.dataset.query;
+        if (query && elements.inputSearchQuery) {
+          elements.inputSearchQuery.value = query;
+          elements.inputSearchQuery.focus();
+        }
+      });
     });
-  });
+  }
 
-  // Settings Form Submit
-  elements.settingsForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    
-    const newDisplayName = (elements.inputDisplayName?.value || '').trim();
-    const mode = elements.selectSourceMode.value;
-    const newSearchQuery = (elements.inputSearchQuery?.value || '4k dark cyberpunk wallpaper').trim();
-    const newUsername = sanitizeHandle(elements.inputUsername.value) || 'pinterest';
-    const newBoard = sanitizeBoard(elements.inputBoard.value) || 'wallpapers';
-    const newDirectUrl = elements.inputDirectUrl.value.trim();
-    const newFitMode = elements.selectFitMode?.value || 'cover';
-    const newAutoRotate = elements.inputAutoRotate ? elements.inputAutoRotate.checked : true;
-    const newInterval = Math.max(5, parseInt(elements.inputInterval.value, 10) || 30);
-    const newTimeFormat = elements.inputTimeFormat.value || '12h';
-    const newUiScale = parseInt(elements.inputScale?.value, 10) || 100;
-    const newDim = parseInt(elements.inputDim.value, 10) || 25;
-    const newBlur = parseInt(elements.inputBlur.value, 10) || 0;
+  // Wallpaper Scaling & Fit Mode Change (Instant live preview)
+  if (elements.selectFitMode) {
+    elements.selectFitMode.addEventListener('change', (e) => {
+      appState.config.fitMode = e.target.value;
+      applyVisualSettings();
+    });
+  }
 
-    const updatedConfig = {
-      displayName: newDisplayName,
-      sourceMode: mode,
-      searchQuery: newSearchQuery,
-      username: newUsername,
-      board: newBoard,
-      directUrl: newDirectUrl,
-      fitMode: newFitMode,
-      autoRotate: newAutoRotate,
-      interval: newInterval,
-      timeFormat: newTimeFormat,
-      uiScale: newUiScale,
-      dim: newDim,
-      blur: newBlur
-    };
+  // Settings Form Submit ("Save Settings" - Persists preferences immediately without reloading feed)
+  if (elements.settingsForm) {
+    elements.settingsForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const newDisplayName = (elements.inputDisplayName?.value || '').trim();
+      const mode = elements.selectSourceMode?.value || 'pinterest-search';
+      const newSearchQuery = (elements.inputSearchQuery?.value || '4k dark cyberpunk wallpaper').trim();
+      const newUsername = sanitizeHandle(elements.inputUsername?.value) || 'pinterest';
+      const newBoard = sanitizeBoard(elements.inputBoard?.value) || 'wallpapers';
+      const newDirectUrl = (elements.inputDirectUrl?.value || '').trim();
+      const newFitMode = elements.selectFitMode?.value || appState.config.fitMode || 'cover';
+      const newAutoRotate = elements.inputAutoRotate ? elements.inputAutoRotate.checked : true;
+      const newInterval = Math.max(5, parseInt(elements.inputInterval?.value, 10) || 30);
+      const newTimeFormat = elements.inputTimeFormat?.value || '12h';
+      const newUiScale = parseInt(elements.inputScale?.value, 10) || 100;
 
-    if (appState.pendingLocalBase64) {
-      updatedConfig.localImageBase64 = appState.pendingLocalBase64;
-      updatedConfig.localImageName = appState.pendingLocalName;
-    }
+      const previousInterval = appState.config.interval;
 
-    await saveConfig(updatedConfig);
+      const updatedConfig = {
+        displayName: newDisplayName,
+        sourceMode: mode,
+        searchQuery: newSearchQuery,
+        username: newUsername,
+        board: newBoard,
+        directUrl: newDirectUrl,
+        fitMode: newFitMode,
+        autoRotate: newAutoRotate,
+        interval: newInterval,
+        timeFormat: newTimeFormat,
+        uiScale: newUiScale
+      };
 
-    applyVisualSettings();
-    updateClock();
-    closeSettingsModal();
+      if (appState.pendingLocalBase64) {
+        updatedConfig.localImageBase64 = appState.pendingLocalBase64;
+        updatedConfig.localImageName = appState.pendingLocalName;
+      }
 
-    // Reload wallpaper stream immediately
-    loadWallpapersByMode(true);
-  });
+      await saveConfig(updatedConfig);
+
+      applyVisualSettings();
+      updateClock();
+
+      // Restart cycle timer if interval changed
+      if (previousInterval !== newInterval && !appState.isPaused) {
+        stopCycleTimer();
+        startCycleTimer();
+      }
+
+      closeSettingsModal();
+      showToast('Settings saved');
+    });
+  }
+
+  // Refresh Feed Button (Flushes active queue and fetches fresh wallpaper stream)
+  if (elements.refreshFeedBtn) {
+    elements.refreshFeedBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+
+      const newDisplayName = (elements.inputDisplayName?.value || '').trim();
+      const mode = elements.selectSourceMode?.value || 'pinterest-search';
+      const newSearchQuery = (elements.inputSearchQuery?.value || '4k dark cyberpunk wallpaper').trim();
+      const newUsername = sanitizeHandle(elements.inputUsername?.value) || 'pinterest';
+      const newBoard = sanitizeBoard(elements.inputBoard?.value) || 'wallpapers';
+      const newDirectUrl = (elements.inputDirectUrl?.value || '').trim();
+      const newFitMode = elements.selectFitMode?.value || appState.config.fitMode || 'cover';
+      const newAutoRotate = elements.inputAutoRotate ? elements.inputAutoRotate.checked : true;
+      const newInterval = Math.max(5, parseInt(elements.inputInterval?.value, 10) || 30);
+      const newTimeFormat = elements.inputTimeFormat?.value || '12h';
+      const newUiScale = parseInt(elements.inputScale?.value, 10) || 100;
+
+      const updatedConfig = {
+        displayName: newDisplayName,
+        sourceMode: mode,
+        searchQuery: newSearchQuery,
+        username: newUsername,
+        board: newBoard,
+        directUrl: newDirectUrl,
+        fitMode: newFitMode,
+        autoRotate: newAutoRotate,
+        interval: newInterval,
+        timeFormat: newTimeFormat,
+        uiScale: newUiScale
+      };
+
+      if (appState.pendingLocalBase64) {
+        updatedConfig.localImageBase64 = appState.pendingLocalBase64;
+        updatedConfig.localImageName = appState.pendingLocalName;
+      }
+
+      await saveConfig(updatedConfig);
+      applyVisualSettings();
+      updateClock();
+
+      // Clear in-memory queue & bookmark cache to force a fresh fetch
+      appState.wallpaperQueue = [];
+      appState.wallpapers = [];
+      appState.seenUrls.clear();
+      appState.preloadedCache.clear();
+      appState.paginationBookmark = null;
+      appState.currentIndex = 0;
+
+      closeSettingsModal();
+      showToast('Refreshing wallpaper feed...');
+
+      // Load fresh batch immediately
+      loadWallpapersByMode(true);
+    });
+  }
 
   // Reset Defaults Button
-  elements.resetBtn.addEventListener('click', async () => {
-    if (elements.inputDisplayName) {
-      elements.inputDisplayName.value = DEFAULT_CONFIG.displayName || '';
-    }
+  if (elements.resetBtn) {
+    elements.resetBtn.addEventListener('click', async () => {
+      if (elements.inputDisplayName) {
+        elements.inputDisplayName.value = DEFAULT_CONFIG.displayName || '';
+      }
 
-    elements.selectSourceMode.value = DEFAULT_CONFIG.sourceMode;
-    updateFormVisibility(DEFAULT_CONFIG.sourceMode);
+      if (elements.selectSourceMode) {
+        elements.selectSourceMode.value = DEFAULT_CONFIG.sourceMode;
+        updateFormVisibility(DEFAULT_CONFIG.sourceMode);
+      }
 
-    if (elements.selectFitMode) {
-      elements.selectFitMode.value = DEFAULT_CONFIG.fitMode;
-    }
+      if (elements.selectFitMode) {
+        elements.selectFitMode.value = DEFAULT_CONFIG.fitMode;
+      }
 
-    if (elements.inputAutoRotate) {
-      elements.inputAutoRotate.checked = DEFAULT_CONFIG.autoRotate;
-    }
+      if (elements.inputAutoRotate) {
+        elements.inputAutoRotate.checked = DEFAULT_CONFIG.autoRotate;
+      }
 
-    if (elements.inputSearchQuery) {
-      elements.inputSearchQuery.value = DEFAULT_CONFIG.searchQuery;
-    }
+      if (elements.inputSearchQuery) {
+        elements.inputSearchQuery.value = DEFAULT_CONFIG.searchQuery;
+      }
 
-    elements.inputUsername.value = DEFAULT_CONFIG.username;
-    elements.inputBoard.value = DEFAULT_CONFIG.board;
-    elements.inputDirectUrl.value = DEFAULT_CONFIG.directUrl;
-    elements.inputInterval.value = DEFAULT_CONFIG.interval;
-    elements.inputTimeFormat.value = DEFAULT_CONFIG.timeFormat;
+      if (elements.inputUsername) elements.inputUsername.value = DEFAULT_CONFIG.username;
+      if (elements.inputBoard) elements.inputBoard.value = DEFAULT_CONFIG.board;
+      if (elements.inputDirectUrl) elements.inputDirectUrl.value = DEFAULT_CONFIG.directUrl;
+      if (elements.inputInterval) elements.inputInterval.value = DEFAULT_CONFIG.interval;
+      if (elements.inputTimeFormat) elements.inputTimeFormat.value = DEFAULT_CONFIG.timeFormat;
 
-    if (elements.inputScale) elements.inputScale.value = DEFAULT_CONFIG.uiScale;
-    if (elements.scaleVal) elements.scaleVal.textContent = DEFAULT_CONFIG.uiScale;
-    document.documentElement.style.setProperty('--ui-scale', `${DEFAULT_CONFIG.uiScale / 100}`);
+      if (elements.inputScale) elements.inputScale.value = DEFAULT_CONFIG.uiScale;
+      if (elements.scaleVal) elements.scaleVal.textContent = DEFAULT_CONFIG.uiScale;
+      document.documentElement.style.setProperty('--ui-scale', `${DEFAULT_CONFIG.uiScale / 100}`);
 
-    elements.inputDim.value = DEFAULT_CONFIG.dim;
-    elements.inputBlur.value = DEFAULT_CONFIG.blur;
-    
-    elements.dimVal.textContent = DEFAULT_CONFIG.dim;
-    elements.blurVal.textContent = DEFAULT_CONFIG.blur;
-
-    elements.presetChips.forEach(c => c.classList.remove('active'));
-    elements.searchChips.forEach(c => c.classList.remove('active'));
-    elements.localPreviewContainer.classList.add('hidden');
-    appState.pendingLocalBase64 = null;
-    appState.pendingLocalName = null;
-  });
+      if (elements.presetChips) elements.presetChips.forEach(c => c.classList.remove('active'));
+      if (elements.searchChips) elements.searchChips.forEach(c => c.classList.remove('active'));
+      if (elements.localPreviewContainer) elements.localPreviewContainer.classList.add('hidden');
+      appState.pendingLocalBase64 = null;
+      appState.pendingLocalName = null;
+    });
+  }
 
   // Keyboard Shortcuts (ArrowLeft = Prev, ArrowRight = Next, Space = Pause/Resume, R = Rotate 90°)
   window.addEventListener('keydown', (e) => {
@@ -2697,6 +3227,11 @@ async function initApp() {
   } else {
     loadWallpapersByMode(false);
   }
+
+  // 4. Ensure immediate search input autofocus
+  focusSearchInput();
+  requestAnimationFrame(() => focusSearchInput());
+  window.addEventListener('focus', () => focusSearchInput());
 }
 
 // Immediately attempt cold-start on script execution before DOMContentLoaded
@@ -2704,4 +3239,8 @@ loadRotations();
 applyColdStartWallpaper();
 
 // Start on DOM Ready
-document.addEventListener('DOMContentLoaded', initApp);
+document.addEventListener('DOMContentLoaded', () => {
+  initApp();
+  focusSearchInput();
+  requestAnimationFrame(() => focusSearchInput());
+});
